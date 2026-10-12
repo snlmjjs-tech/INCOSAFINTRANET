@@ -361,8 +361,9 @@ document.querySelectorAll("img[data-logo]").forEach(i=>i.src=LOGO);
 /* ===== CONEXIÓN A SUPABASE ===== */
 const CONFIG={
   url:"https://vtgpdbvleyjcaxeezrbb.supabase.co",
-  key:"PEGA_AQUI_LA_PUBLISHABLE_KEY", // clave pública (sb_publishable_…): es seguro que esté aquí
-  emailDomain:"incosaf.local"          // debe coincidir con la función admin-users
+  key:"sb_publishable_re4mya70bmyTFmJ2ouuwjA__mhXshcL", // clave pública (sb_publishable_…): es seguro que esté aquí
+  emailDomain:"incosaf.local",         // debe coincidir con la función de administración
+  adminFunction:"clever-responder"     // nombre (slug) con que quedó publicada la función en Supabase
 };
 const sb=(!/PEGA_AQUI/.test(CONFIG.key)&&window.supabase)?window.supabase.createClient(CONFIG.url,CONFIG.key):null;
 const ASIG=["Inglés","Lenguaje","Matemática","Contabilidad","Historia","Ciencias"];
@@ -965,9 +966,9 @@ function formError(msg,field){
 async function runOps(ops){
   const results=[];
   for(let i=0;i<ops.length;i+=100){
-    const {data,error}=await sb.functions.invoke("admin-users",{body:{ops:ops.slice(i,i+100)}});
+    const {data,error}=await sb.functions.invoke(CONFIG.adminFunction,{body:{ops:ops.slice(i,i+100)}});
     if(error){
-      let m="No se pudo conectar con el servidor. Comprueba que la función admin-users esté publicada.";
+      let m="No se pudo conectar con el servidor. Comprueba que la función de administración esté publicada.";
       if(error.context&&typeof error.context.json==="function"){try{const j=await error.context.json();if(j&&j.error)m=j.error}catch(e){}}
       throw new Error(m);
     }
