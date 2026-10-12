@@ -278,6 +278,28 @@ main:focus{outline:none}
 .tp-observacion{background:var(--soft);color:var(--ink)}
 .sum.rise{margin:0 0 18px}
 
+/* ---------- planilla de notas ---------- */
+.sheet-top{max-width:560px}
+.sbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:6px 0 14px}
+.sinfo span{display:inline-block;padding:5px 12px;border-radius:8px;font-weight:700;font-size:13.5px;background:var(--soft)}
+.sinfo .a{background:var(--ok-bg);color:var(--ok)}
+.sinfo .e{background:var(--bad-bg);color:var(--bad)}
+.warnbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:10px;background:var(--bad-bg);color:var(--bad);font-weight:600;font-size:14px;margin-bottom:14px;border:1px solid #f4c7c3}
+.sheetwrap{max-height:62vh;overflow:auto}
+.sheet{border-collapse:separate;border-spacing:0;width:100%;font-size:14.5px}
+.sheet th,.sheet td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:center;white-space:nowrap}
+.sheet thead th{position:sticky;top:0;z-index:2;background:var(--bg);font-size:12.5px;color:var(--muted);font-weight:700}
+.sheet thead th.new{color:var(--navy)}
+.sheet .sname{text-align:left;font-weight:600;position:sticky;left:0;z-index:1;background:#fff;min-width:210px}
+.sheet thead .sname{z-index:3;background:var(--bg);font-weight:700}
+.sheet .sn{color:var(--muted);font-variant-numeric:tabular-nums}
+.sheet tbody tr:hover td,.sheet tbody tr:hover th{background:#f7f9ff}
+.gi{width:72px;text-align:center;padding:8px 6px;border-radius:8px;font-weight:600;font-variant-numeric:tabular-nums}
+.gi.old{background:var(--soft)}
+.gi:disabled{opacity:.6;cursor:not-allowed}
+.savg{font-weight:800;font-variant-numeric:tabular-nums}
+.savg.bad{color:var(--bad)}
+
 /* ---------- movimiento ---------- */
 @keyframes pop{from{opacity:0;transform:translateX(-50%) translateY(10px)}}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}}
@@ -463,7 +485,7 @@ async function enter(user){
   if(error||!p){await sb.auth.signOut();return setLoginError(error?"No se pudo cargar tu perfil. Inténtalo de nuevo.":"Tu cuenta aún no tiene un perfil asignado. Consulta con la administración.")}
   me={id:p.id,usuario:p.usuario,role:p.rol,name:p.nombre,curso:p.curso};
   view=me.role==="apo"?"notas":me.role==="adm"?"admin":"inicio";
-  hijo="";prof.curso="";prof.est="";Object.assign(adm,{q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false});
+  hijo="";prof.curso="";prof.est="";sheetReset();sheet.curso="";Object.assign(adm,{q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false});
   $("#login").classList.add("hidden");$("#app").classList.remove("hidden");
   $("#main").innerHTML='<div class="loading" role="status">Cargando…</div>';
   $("#wname").textContent=me.name;$("#wrole").textContent=me.curso||ROLES[me.role];
@@ -473,7 +495,7 @@ async function enter(user){
 $("#go").onclick=doLogin;
 ["uid","pw"].forEach(i=>{const el=$("#"+i);el.addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});el.addEventListener("input",()=>{["uid","pw"].forEach(k=>$("#"+k).removeAttribute("aria-invalid"));$("#lerr").classList.add("hidden")})});
 async function logout(msg){
-  me=null;renderSeq++;USERS={};DB.notas=[];DB.anots=[];DB.hijos=[];DB.ests=[];
+  me=null;renderSeq++;USERS={};sheetReset();DB.notas=[];DB.anots=[];DB.hijos=[];DB.ests=[];
   try{if(sb)await sb.auth.signOut()}catch(e){}
   $("#main").innerHTML="";["uid","pw"].forEach(i=>$("#"+i).removeAttribute("aria-invalid"));
   $("#app").classList.add("hidden");$("#login").classList.remove("hidden");$("#pw").value="";
@@ -493,7 +515,9 @@ function buildNav(){
   const html=NAV[me.role].map(([k,l,i])=>`<button class="nav" data-v="${k}">${i}<span>${l}</span></button>`).join("");
   $("#dock").classList.toggle("hidden",me.role==="adm");
   $("#nav").innerHTML=html;$("#dock").innerHTML=html;
-  document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{view=b.dataset.v;render();window.scrollTo({top:0,behavior:REDUCED?"auto":"smooth"})});
+  document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{
+    if(view==="ingreso"&&b.dataset.v!=="ingreso"&&sheetDirty()){if(!confirm("Tienes notas sin guardar. ¿Salir de todos modos?"))return;sheetReset()}
+    view=b.dataset.v;render();window.scrollTo({top:0,behavior:REDUCED?"auto":"smooth"})});
 }
 const NEEDS={est:["inicio","notas"],apo:["notas","anotaciones"],prof:["ingreso","anotar"],adm:["admin"]};
 const TITLES={inicio:"Inicio",notas:"Notas",ingreso:"Ingresar notas",anotar:"Anotaciones",anotaciones:"Anotaciones",horario:"Horario",classrooms:"Classrooms",noticias:"Noticias",admin:"Panel de control"};
@@ -617,59 +641,175 @@ function bindPicker(after){
 const busy=(btn,on)=>{btn.disabled=on;btn.setAttribute("aria-busy",on)};
 const showErr=(id,msg,field)=>{const e=$("#"+id);e.textContent=msg;e.classList.remove("hidden");if(field){field.setAttribute("aria-invalid","true");field.focus()}};
 /* lista de registros recientes del estudiante elegido (con eliminar en dos pasos) */
-async function loadRecent(kind){
-  const box=$(kind==="notas"?"#ilist":"#alist");if(!box)return;
+/* lista de anotaciones recientes del estudiante elegido (con eliminar en dos pasos) */
+async function loadRecent(){
+  const box=$("#alist");if(!box)return;
   const est=prof.est;
   if(!est){box.innerHTML='<p class="hint">Elige un estudiante para ver sus registros.</p>';return}
   box.innerHTML='<p class="hint">Cargando…</p>';
   try{
-    const rows=await q(sb.from(kind).select("*").eq("estudiante_id",est).order("created_at",{ascending:false}).limit(40));
-    if(est!==prof.est||!$(kind==="notas"?"#ilist":"#alist"))return;
-    const del=r=>r.profesor_id===me.id?`<button type="button" class="btn ghost danger sm" data-del="${esc(r.id)}" aria-label="Eliminar este registro">Eliminar</button>`:"";
-    box.innerHTML=rows.length?`<ul class="rlist">${rows.map(r=>kind==="notas"
-      ?`<li class="rrow"><div class="rbody"><div class="rmain"><b>${esc(r.asignatura)}</b><span class="gn">${f1(Number(r.nota))}</span></div><small>${fmtDate(r.created_at)}${r.profesor_nombre?" · "+esc(r.profesor_nombre):""}</small></div>${del(r)}</li>`
-      :`<li class="rrow"><div class="rbody"><div class="rmain"><span class="tag tp-${esc(r.tipo)}">${esc(TIPOS[r.tipo]||r.tipo)}</span>${r.asignatura?`<b>${esc(r.asignatura)}</b>`:""}</div><p>${esc(r.detalle)}</p><small>${fmtDate(r.fecha)}${r.profesor_nombre?" · "+esc(r.profesor_nombre):""}</small></div>${del(r)}</li>`).join("")}</ul>`
-      :'<p class="hint">Aún no hay registros para este estudiante.</p>';
+    const rows=await q(sb.from("anotaciones").select("*").eq("estudiante_id",est).order("created_at",{ascending:false}).limit(40));
+    if(est!==prof.est||!$("#alist"))return;
+    const del=r=>r.profesor_id===me.id?`<button type="button" class="btn ghost danger sm" data-del="${esc(r.id)}" aria-label="Eliminar esta anotación">Eliminar</button>`:"";
+    box.innerHTML=rows.length?`<ul class="rlist">${rows.map(r=>`<li class="rrow"><div class="rbody"><div class="rmain"><span class="tag tp-${esc(r.tipo)}">${esc(TIPOS[r.tipo]||r.tipo)}</span>${r.asignatura?`<b>${esc(r.asignatura)}</b>`:""}</div><p>${esc(r.detalle)}</p><small>${fmtDate(r.fecha)}${r.profesor_nombre?" · "+esc(r.profesor_nombre):""}</small></div>${del(r)}</li>`).join("")}</ul>`
+      :'<p class="hint">Aún no hay anotaciones para este estudiante.</p>';
   }catch(e){box.innerHTML='<p class="hint warn">No se pudo cargar la lista. Revisa tu conexión.</p>'}
 }
-function bindRecentDelete(kind){
-  const box=$(kind==="notas"?"#ilist":"#alist"),reload=()=>loadRecent(kind);
+function bindRecentDelete(){
+  const box=$("#alist");
   box.onclick=async e=>{const b=e.target.closest("button[data-del]");if(!b)return;
-    if(!b.dataset.armed){clearTimeout(box.t);b.dataset.armed="1";b.textContent="¿Confirmar?";b.classList.remove("ghost");box.t=setTimeout(reload,3500);return}
+    if(!b.dataset.armed){clearTimeout(box.t);b.dataset.armed="1";b.textContent="¿Confirmar?";b.classList.remove("ghost");box.t=setTimeout(loadRecent,3500);return}
     clearTimeout(box.t);b.disabled=true;
-    try{await q(sb.from(kind).delete().eq("id",b.dataset.del));toast("Registro eliminado",1)}catch(err){toast("No se pudo eliminar")}
-    reload();
+    try{await q(sb.from("anotaciones").delete().eq("id",b.dataset.del));toast("Anotación eliminada",1)}catch(err){toast("No se pudo eliminar")}
+    loadRecent();
   };
 }
 const emptyEsts=t=>head("Panel docente",t,esc(me.curso))+emptyBox("No hay estudiantes registrados","La administración puede agregarlos desde el panel de control.");
+
+/* ----- notas: planilla tipo Excel por curso y asignatura ----- */
+const NOTA_RE=/^(?:[1-6](?:[.,]\d)?|7(?:[.,]0)?)$/;
+const MAX_COLS=4;
+const sheet={curso:"",asig:ASIG[0],cols:1,vals:{},edits:{},notes:[],saving:false,tk:0};
+const keyOf=(sid,c)=>sid+"|"+c;
+const cursoKey=e=>e.curso||"Sin curso";
+const cursosHoja=()=>[...new Set(DB.ests.map(cursoKey))].sort((a,b)=>a.localeCompare(b,"es",{numeric:true}));
+const hojaEsts=()=>DB.ests.filter(e=>cursoKey(e)===sheet.curso);
+const fmtNota=n=>f1(Number(n));
+function parseNota(v){const t=norm(v);if(t==="")return null;if(!NOTA_RE.test(t))return NaN;return Math.round(parseFloat(t.replace(",","."))*10)/10}
+function sheetReset(){sheet.vals={};sheet.edits={};sheet.cols=1}
+function sheetPlan(){
+  const ins=[],upd=[],del=[];let bad=0;
+  hojaEsts().forEach(e=>{for(let c=0;c<sheet.cols;c++){
+    const v=sheet.vals[keyOf(e.id,c)];if(v===undefined||norm(v)==="")continue;
+    const n=parseNota(v);if(Number.isNaN(n))bad++;else ins.push({estudiante_id:e.id,asignatura:sheet.asig,nota:n});
+  }});
+  sheet.notes.forEach(n=>{
+    const v=sheet.edits[n.id];if(v===undefined||norm(v)===fmtNota(n.nota))return;
+    const p=parseNota(v);
+    if(p===null)del.push(n.id);else if(Number.isNaN(p))bad++;else if(p!==Number(n.nota))upd.push({id:n.id,nota:p});
+  });
+  return{ins,upd,del,bad};
+}
+const sheetDirty=()=>{const p=sheetPlan();return p.bad>0||p.ins.length+p.upd.length+p.del.length>0||Object.values(sheet.vals).some(v=>norm(v)!=="")};
+function rowAvg(e){
+  const vals=[];
+  sheet.notes.filter(n=>n.estudiante_id===e.id).forEach(n=>{
+    const v=sheet.edits[n.id];
+    if(v===undefined)vals.push(Number(n.nota));else{const p=parseNota(v);if(p!==null&&!Number.isNaN(p))vals.push(p)}
+  });
+  for(let c=0;c<sheet.cols;c++){const p=parseNota(sheet.vals[keyOf(e.id,c)]??"");if(p!==null&&!Number.isNaN(p))vals.push(p)}
+  return vals.length?avg(vals):null;
+}
 function vIngreso(){
   if(!DB.ests.length)return emptyEsts("Ingresar notas");
-  ensureEst();
-  return head("Panel docente","Ingresar notas",esc(me.curso))+
-  `<div class="stack"><section class="surface card rise" ${stag(1)} style="max-width:760px" aria-label="Nueva nota">${pickerHtml()}
-    <div class="form"><div><label for="iasig">Asignatura</label><select id="iasig">${ASIG.map(a=>`<option>${a}</option>`).join("")}</select></div>
-    <div><label for="inota">Nota (1,0 a 7,0)</label><input id="inota" inputmode="decimal" autocomplete="off" placeholder="Ej: 6,5" aria-describedby="ierr"></div></div>
-    <div id="ierr" class="err hidden" role="alert"></div>
-    <button class="btn gold" id="isave" style="margin-top:6px">Guardar nota <span class="dot">${I('<path d="M5 12l5 5L20 7"/>')}</span></button></section>
-  <section class="surface card rise" ${stag(2)} style="max-width:760px"><h3>Notas registradas</h3><div id="ilist" aria-live="polite"></div></section></div>`;
+  const cursos=cursosHoja();
+  if(!cursos.includes(sheet.curso))sheet.curso=cursos[0];
+  return head("Panel docente","Ingresar notas","Planilla del curso: escribe las notas de todos y guarda una sola vez")+
+  `<section class="surface card rise" ${stag(1)} aria-label="Planilla de notas">
+    <div class="form sheet-top"><div><label for="scurso">Curso</label><select id="scurso">${cursos.map(c=>`<option ${c===sheet.curso?"selected":""}>${esc(c)}</option>`).join("")}</select></div>
+    <div><label for="sasig">Asignatura</label><select id="sasig">${ASIG.map(a=>`<option ${a===sheet.asig?"selected":""}>${a}</option>`).join("")}</select></div></div>
+    <div id="sheet" aria-live="polite"><p class="hint">Cargando…</p></div></section>`;
+}
+function paintSheet(){
+  const box=$("#sheet");if(!box)return;
+  const ests=hojaEsts(),by={};
+  sheet.notes.forEach(n=>(by[n.estudiante_id]??=[]).push(n));
+  const k=Math.max(0,...ests.map(e=>(by[e.id]||[]).length));
+  const thead=`<tr><th class="sname" scope="col">Estudiante</th><th scope="col">Usuario</th>${Array.from({length:k},(_,j)=>`<th scope="col">Nota ${j+1}</th>`).join("")}${Array.from({length:sheet.cols},(_,j)=>`<th class="new" scope="col">Nueva ${j+1}</th>`).join("")}<th scope="col">Promedio</th></tr>`;
+  const rows=ests.map((e,r)=>{
+    const mine=by[e.id]||[];
+    const old=Array.from({length:k},(_,j)=>{
+      const n=mine[j];if(!n)return"<td></td>";
+      const own=n.profesor_id===me.id,v=sheet.edits[n.id]??fmtNota(n.nota);
+      return `<td><input class="gi old" data-r="${r}" data-col="${j}" data-note="${esc(n.id)}" value="${esc(v)}" inputmode="decimal" autocomplete="off" ${own?"":"disabled"} title="${esc(fmtDate(n.created_at))}${n.profesor_nombre?" · "+esc(n.profesor_nombre):""}${own?"":" (de otro profesor)"}" aria-label="Nota ${j+1} de ${esc(e.nombre)}"></td>`;
+    }).join("");
+    const nw=Array.from({length:sheet.cols},(_,c)=>`<td><input class="gi" data-r="${r}" data-col="${k+c}" data-s="${esc(e.id)}" data-c="${c}" value="${esc(sheet.vals[keyOf(e.id,c)]??"")}" inputmode="decimal" autocomplete="off" aria-label="Nueva nota ${c+1} de ${esc(e.nombre)}"></td>`).join("");
+    return `<tr><th scope="row" class="sname">${esc(e.nombre)}</th><td class="sn">${esc(e.usuario)}</td>${old}${nw}<td class="savg" id="avg-${esc(e.id)}"></td></tr>`;
+  }).join("");
+  box.innerHTML=`<div class="sbar"><div id="sinfo" class="sinfo"></div><div class="actions"><button type="button" class="btn ghost sm" id="saddcol" ${sheet.cols>=MAX_COLS?"disabled":""}>${ICON.plus}Agregar columna</button><button type="button" class="btn gold sm" id="ssave">Guardar notas</button></div></div><div id="sconfirm"></div>
+    ${ests.length?`<div class="twrap sheetwrap" tabindex="0" role="region" aria-label="Planilla de notas"><table class="sheet"><thead>${thead}</thead><tbody>${rows}</tbody></table></div><p class="hint">Escribe con coma o punto (6,5). Enter baja a la fila siguiente. Puedes pegar una columna copiada desde Excel.</p>`:'<p class="hint">No hay estudiantes en este curso.</p>'}`;
+  sheetStatus();
+}
+function sheetStatus(){
+  const info=$("#sinfo");if(!info)return;
+  const p=sheetPlan();
+  document.querySelectorAll("#sheet .gi").forEach(i=>{if(i.value!==""&&Number.isNaN(parseNota(i.value)))i.setAttribute("aria-invalid","true");else i.removeAttribute("aria-invalid")});
+  hojaEsts().forEach(e=>{const c=document.getElementById("avg-"+e.id);if(!c)return;const a=rowAvg(e);c.textContent=a===null?"—":f1(a);c.classList.toggle("bad",a!==null&&a<4)});
+  const pl=(n,s,pp)=>`${n} ${n===1?s:pp}`,parts=[];
+  if(p.ins.length)parts.push(pl(p.ins.length,"nueva","nuevas"));
+  if(p.upd.length)parts.push(pl(p.upd.length,"modificada","modificadas"));
+  if(p.del.length)parts.push(`${p.del.length} a eliminar`);
+  info.innerHTML=p.bad?`<span class="e">${pl(p.bad,"celda","celdas")} con nota inválida (usa de 1,0 a 7,0)</span>`:(parts.length?`<span class="a">${parts.join(" · ")}</span>`:'<span>Sin cambios por guardar</span>');
+  $("#ssave").disabled=sheet.saving||p.bad>0||p.ins.length+p.upd.length+p.del.length===0;
+}
+async function loadSheet(){
+  const tk=++sheet.tk,ids=hojaEsts().map(e=>e.id),box=$("#sheet");
+  if(box)box.innerHTML='<p class="hint">Cargando…</p>';
+  try{
+    const notes=[];
+    for(let i=0;i<ids.length;i+=100)notes.push(...await q(sb.from("notas").select("*").eq("asignatura",sheet.asig).in("estudiante_id",ids.slice(i,i+100)).order("created_at")));
+    if(tk!==sheet.tk||!$("#sheet"))return;
+    notes.sort((a,b)=>a.created_at<b.created_at?-1:a.created_at>b.created_at?1:0);
+    sheet.notes=notes;paintSheet();
+  }catch(e){if(tk===sheet.tk&&$("#sheet"))$("#sheet").innerHTML='<p class="hint warn">No se pudo cargar la planilla. Revisa tu conexión e inténtalo de nuevo.</p>'}
+}
+async function guardarHoja(confirmed){
+  const p=sheetPlan(),total=p.ins.length+p.upd.length+p.del.length;
+  if(p.bad||sheet.saving||!total)return;
+  if(p.del.length&&!confirmed){
+    $("#sconfirm").innerHTML=`<div class="warnbar" role="alert"><span>Vas a eliminar ${p.del.length} nota${p.del.length===1?"":"s"} existente${p.del.length===1?"":"s"}. No se puede deshacer.</span><div class="actions"><button type="button" class="btn danger sm" id="sconfirmok">Confirmar y guardar</button><button type="button" class="btn ghost sm" id="sconfirmno">Cancelar</button></div></div>`;
+    return;
+  }
+  $("#sconfirm").innerHTML="";sheet.saving=true;sheetStatus();
+  try{
+    if(p.ins.length){await q(sb.from("notas").insert(p.ins));sheet.vals={}}
+    for(const u of p.upd){await q(sb.from("notas").update({nota:u.nota}).eq("id",u.id));delete sheet.edits[u.id]}
+    if(p.del.length){await q(sb.from("notas").delete().in("id",p.del));p.del.forEach(id=>delete sheet.edits[id])}
+    toast(`${total} cambio${total===1?"":"s"} guardado${total===1?"":"s"}`,1);
+    sheetReset();
+  }catch(e){toast("No se pudo guardar todo. Revisa la planilla e inténtalo de nuevo.")}
+  sheet.saving=false;await loadSheet();
 }
 function bindIngreso(){
-  if(!$("#isave"))return;
-  const reload=()=>loadRecent("notas");
-  bindPicker(reload);reload();bindRecentDelete("notas");
-  $("#inota").addEventListener("input",()=>{$("#inota").removeAttribute("aria-invalid");$("#ierr").classList.add("hidden")});
-  $("#inota").addEventListener("keydown",e=>{if(e.key==="Enter")$("#isave").click()});
-  $("#isave").onclick=async()=>{
-    const v=parseFloat($("#inota").value.replace(",",".")),btn=$("#isave");
-    if(!prof.est)return showErr("ierr","Elige un estudiante.",$("#pest"));
-    if(isNaN(v)||v<1||v>7)return showErr("ierr","Escribe una nota entre 1,0 y 7,0, por ejemplo 6,5.",$("#inota"));
-    $("#ierr").classList.add("hidden");busy(btn,true);
-    try{
-      await q(sb.from("notas").insert({estudiante_id:prof.est,asignatura:$("#iasig").value,nota:Math.round(v*10)/10}));
-      $("#inota").value="";toast("Nota guardada",1);reload();
-    }catch(e){showErr("ierr","No se pudo guardar la nota. Revisa tu conexión e inténtalo de nuevo.")}
-    finally{busy(btn,false)}
-  };
+  if(!$("#scurso"))return;
+  const okLeave=()=>!sheetDirty()||confirm("Tienes notas sin guardar. ¿Cambiar de todos modos?");
+  $("#scurso").onchange=e=>{if(!okLeave()){e.target.value=sheet.curso;return}sheet.curso=e.target.value;sheetReset();loadSheet()};
+  $("#sasig").onchange=e=>{if(!okLeave()){e.target.value=sheet.asig;return}sheet.asig=e.target.value;sheetReset();loadSheet()};
+  const box=$("#sheet");
+  box.addEventListener("input",ev=>{
+    const i=ev.target;if(!i.classList||!i.classList.contains("gi"))return;
+    if(i.dataset.note)sheet.edits[i.dataset.note]=i.value;else sheet.vals[keyOf(i.dataset.s,i.dataset.c)]=i.value;
+    $("#sconfirm").innerHTML="";sheetStatus();
+  });
+  box.addEventListener("keydown",ev=>{
+    const i=ev.target;if(!i.classList||!i.classList.contains("gi"))return;
+    const dir=ev.key==="Enter"||ev.key==="ArrowDown"?1:ev.key==="ArrowUp"?-1:0;if(!dir)return;
+    ev.preventDefault();
+    const last=hojaEsts().length;
+    for(let r=+i.dataset.r+dir;r>=0&&r<last;r+=dir){
+      const nx=box.querySelector(`.gi[data-r="${r}"][data-col="${i.dataset.col}"]`);
+      if(nx&&!nx.disabled){nx.focus();nx.select();return}
+    }
+  });
+  box.addEventListener("paste",ev=>{
+    const i=ev.target;if(!i.dataset||i.dataset.s===undefined)return;
+    const t=((ev.clipboardData||window.clipboardData).getData("text")||"").replace(/\r/g,"").replace(/\n+$/,"");
+    if(!/[\t\n]/.test(t))return; // un solo valor: pegado normal
+    ev.preventDefault();
+    const lines=t.split("\n").map(l=>l.split("\t")),ests=hojaEsts(),r0=+i.dataset.r,c0=+i.dataset.c;
+    sheet.cols=Math.min(MAX_COLS,Math.max(sheet.cols,c0+Math.max(...lines.map(l=>l.length))));
+    lines.forEach((l,di)=>{const e=ests[r0+di];if(!e)return;l.forEach((v,dj)=>{if(c0+dj<MAX_COLS)sheet.vals[keyOf(e.id,c0+dj)]=norm(v)})});
+    paintSheet();
+    const f=box.querySelector(`.gi[data-s="${i.dataset.s}"][data-c="${c0}"]`);if(f)f.focus();
+  });
+  box.addEventListener("click",ev=>{
+    const b=ev.target.closest("button");if(!b)return;
+    if(b.id==="saddcol"){sheet.cols=Math.min(MAX_COLS,sheet.cols+1);paintSheet()}
+    else if(b.id==="ssave")guardarHoja();
+    else if(b.id==="sconfirmok")guardarHoja(true);
+    else if(b.id==="sconfirmno")$("#sconfirm").innerHTML="";
+  });
+  loadSheet();
 }
 function vAnotar(){
   if(!DB.ests.length)return emptyEsts("Anotaciones");
@@ -686,8 +826,7 @@ function vAnotar(){
 }
 function bindAnotar(){
   if(!$("#asave"))return;
-  const reload=()=>loadRecent("anotaciones");
-  bindPicker(reload);reload();bindRecentDelete("anotaciones");
+  bindPicker(loadRecent);loadRecent();bindRecentDelete();
   $("#atipo").onclick=e=>{const b=e.target.closest("button");if(!b)return;prof.tipo=b.dataset.t;$("#atipo").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b))};
   $("#adet").addEventListener("input",()=>{$("#adet").removeAttribute("aria-invalid");$("#aerr").classList.add("hidden")});
   $("#asave").onclick=async()=>{
@@ -697,7 +836,7 @@ function bindAnotar(){
     $("#aerr").classList.add("hidden");busy(btn,true);
     try{
       await q(sb.from("anotaciones").insert({estudiante_id:prof.est,tipo:prof.tipo,asignatura:$("#aasig").value||null,detalle:det}));
-      $("#adet").value="";toast("Anotación guardada",1);reload();
+      $("#adet").value="";toast("Anotación guardada",1);loadRecent();
     }catch(e){showErr("aerr","No se pudo guardar la anotación. Revisa tu conexión e inténtalo de nuevo.")}
     finally{busy(btn,false)}
   };
@@ -733,15 +872,15 @@ const norm=s=>String(s??"").trim();
 const ID_RE=/^[a-z0-9._-]{2,32}$/;
 const ROLES={est:"Estudiante",prof:"Profesor",apo:"Apoderado",adm:"Administrador"};
 const ROLE_IN={est:"est",estudiante:"est",alumno:"est",alumna:"est",prof:"prof",profesor:"prof",profesora:"prof",docente:"prof",apo:"apo",apoderado:"apo",apoderada:"apo"};
-const ACT_IN={agregar:"add",crear:"add",nuevo:"add",add:"add",modificar:"mod",editar:"mod",actualizar:"mod",mod:"mod",eliminar:"del",borrar:"del",quitar:"del",del:"del"};
+const ACT_IN={agregar:"add",crear:"add",nuevo:"add",add:"add",modificar:"mod",editar:"mod",actualizar:"mod",mod:"mod",eliminar:"del",borrar:"del",quitar:"del",del:"del",restablecer:"reset",resetear:"reset",reiniciar:"reset",reset:"reset"};
 const pick=(o,k)=>Object.hasOwn(o,k)?o[k]:undefined;
 const parseHijos=v=>[...new Set(norm(v).toLowerCase().split(/[,;\s]+/).filter(Boolean))];
 const adm={q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false,t:0};
 const COLS=["Acción","Rol","Usuario","Contraseña","Nombre","Curso","Hijos"];
 const E=(error,field)=>({error,field});
 
-/* Aplica una fila (alta, cambio o baja) sobre `sim`. Devuelve {type,id,op} o {error,field}.
-   `op` es lo que recibe la función del servidor. */
+/* Aplica una fila (alta, cambio, baja o restablecer clave) sobre `sim`.
+   Devuelve {type,id,info,op} o {error,field}. `op` es lo que recibe la función del servidor. */
 function mutate(sim,r){
   const raw=norm(r.id),id=raw.toLowerCase();
   if(!id)return E("Falta el usuario.","id");
@@ -749,13 +888,18 @@ function mutate(sim,r){
   const ex=pick(sim,id)||null;
   if(ex&&ex.role==="adm")return E("El administrador no se puede cambiar desde aquí.","id");
   if(r.act==="del"){if(!ex)return E(`No existe el usuario «${id}» para eliminar.`,"id");delete sim[id];return{type:"del",id,op:{type:"del",id}}}
+  if(r.act==="reset"){
+    if(!ex)return E(`No existe el usuario «${id}» para restablecer su contraseña.`,"id");
+    if(!r.pw)return E("Falta el RUT para restablecer la contraseña.","pw");
+    return{type:"reset",id,info:{id,name:ex.name,role:ex.role,curso:ex.curso},op:{type:"mod",id,pw:r.pw,role:ex.role,name:ex.name,curso:ex.curso}};
+  }
   if(r.act==="add"&&ex)return E(`El usuario «${id}» ya existe. Usa «modificar» o deja la acción vacía.`,"id");
   if(r.act==="mod"&&!ex)return E(`El usuario «${id}» no existe. Usa «agregar» o deja la acción vacía.`,"id");
   const role=r.role?ROLE_IN[strip(r.role)]:(ex?ex.role:"");
   if(r.role&&!role)return E(`El rol «${r.role}» no es válido. Usa estudiante, profesor o apoderado.`,"role");
   if(!role)return E("Falta el rol (estudiante, profesor o apoderado).","role");
-  const pw=r.pw;
-  if(!ex&&!pw)return E("Falta la contraseña.","pw");
+  const pw=(r.pwAuto&&ex)?"":r.pw; // clave automática (RUT): solo al crear o al restablecer
+  if(!ex&&!pw)return E(r.pwAuto?"Falta el RUT (se usa para la contraseña inicial).":"Falta la contraseña.","pw");
   if(pw&&(pw.length<6||pw.length>64))return E("La contraseña debe tener entre 6 y 64 caracteres.","pw");
   const keep=(v,old)=>r.exact||v!==""?v:(ex?ex[old]:"");
   const name=keep(r.name,"name");
@@ -763,41 +907,88 @@ function mutate(sim,r){
   if(name.length>80)return E("El nombre supera los 80 caracteres.","name");
   const curso=keep(r.curso,"curso");
   if(curso.length>40)return E("El curso o cargo supera los 40 caracteres.","curso");
+  if(r.needCurso&&!curso)return E("Falta el curso (ejemplo: 1°A).","curso");
   const u={uid:ex?ex.uid:null,role,name,curso};
   if(role==="apo")u.hijos=r.hijos===undefined?((ex&&ex.hijos)||[]):parseHijos(r.hijos);
   sim[id]=u;
   const type=ex?"mod":"add";
-  return{type,id,op:{type,id,pw:pw||undefined,role,name,curso,hijos:role==="apo"&&r.hijos!==undefined?u.hijos:undefined}};
+  return{type,id,info:{id,name,role,curso},op:{type,id,pw:pw||undefined,role,name,curso,hijos:role==="apo"&&r.hijos!==undefined?u.hijos:undefined}};
 }
 
 function buildPlan(rows,file){
-  const sim=structuredClone(USERS),ops=[],issues=[],c={add:0,mod:0,del:0,err:0};
+  const sim=structuredClone(USERS),ops=[],issues=[],preview=[],c={add:0,mod:0,del:0,reset:0,err:0};
   rows.forEach(({n,r,error})=>{
     const res=error?E(error):mutate(sim,r);
-    if(res.error){c.err++;issues.push({n,t:"e",m:res.error})}else{c[res.type]++;ops.push(res)}
+    if(res.error){c.err++;issues.push({n,t:"e",m:res.error})}else{c[res.type]++;ops.push(res);if(res.info)preview.push({...res.info,type:res.type})}
   });
   const touched=new Set(ops.map(o=>o.id));
   touched.forEach(id=>{const u=pick(sim,id);if(u&&u.role==="apo"){
     const miss=(u.hijos||[]).filter(h=>!(pick(sim,h)&&sim[h].role==="est"));
     if(miss.length)issues.push({n:0,t:"w",m:`El apoderado «${id}» tiene estudiantes que aún no existen: ${miss.join(", ")}.`});
   }});
-  return{sim,ops,issues,c,file,total:rows.length};
+  return{sim,ops,issues,preview,c,file,total:rows.length};
 }
 
+/* Reglas de usuario y contraseña (plantillas): alumno 1000+N°, profesor 2000+N°, apoderado 3000+N° del estudiante.
+   La contraseña inicial son los 6 primeros dígitos del RUT. */
+const PREFIX={est:1000,prof:2000,apo:3000};
+const normCurso=s=>{const t=norm(s).replace(/\s+/g," "),m=t.match(/^(\d{1,2})\s*[°ºo]?\s*([A-Za-z])$/i);return m?`${m[1]}°${m[2].toUpperCase()}`:t.toUpperCase()};
+function usuarioDesde(kind,val,label){
+  const v=norm(val).replace(/\s+/g,"");
+  if(!/^\d+$/.test(v))return{error:`El ${label} «${norm(val)||"vacío"}» no es válido. Usa un número de 1 a 999 (ejemplo: 234).`};
+  const n=Number(v),base=PREFIX[kind];
+  if(n>=1&&n<=999)return{n,id:String(base+n)};
+  if(v.length===4&&n>base&&n<=base+999)return{n:n-base,id:v};
+  return{error:`El ${label} «${v}» está fuera de rango. Usa un número de 1 a 999.`};
+}
+function claveDesdeRut(rut){
+  const d=norm(rut).replace(/[.\s]/g,"").split("-")[0].replace(/\D/g,"");
+  return d.length<6?{error:`El RUT «${norm(rut)}» no es válido: necesito al menos 6 dígitos.`}:{pw:d.slice(0,6)};
+}
+function planTemplate(kind,head,body,file){
+  const f=re=>head.findIndex(h=>re.test(h)),cell=(row,i)=>i<0?"":norm(row[i]);
+  const ix={act:f(/^accion$/),rut:f(/^rut$/),name:f(/^nombre/),curso:f(/^(curso|cargo)$/)};
+  const num=f({est:/^n\W*\s*alumno$/,prof:/^n\W*\s*profesor$/,apo:/^n\W*\s*estudiante(\s*1)?$/}[kind]);
+  const num2=f(/^n\W*\s*estudiante\s*2$/),num3=f(/^n\W*\s*estudiante\s*3$/);
+  const rows=body.map(({row,n})=>{
+    const a=strip(cell(row,ix.act)),act=a===""?"":pick(ACT_IN,a);
+    if(act===undefined)return{n,error:`La acción «${cell(row,ix.act)}» no es válida. Usa agregar, modificar, eliminar o restablecer.`};
+    let id,hijos;
+    if(kind==="apo"){
+      const ids=[];
+      for(const [i,lab] of [[num,"N° estudiante"],[num2,"N° estudiante 2"],[num3,"N° estudiante 3"]]){
+        const v=cell(row,i);if(v==="")continue;
+        const u=usuarioDesde("est",v,lab);if(u.error)return{n,error:u.error};ids.push(u);
+      }
+      if(!ids.length)return{n,error:"Falta el N° del estudiante."};
+      id=String(PREFIX.apo+ids[0].n);hijos=ids.map(u=>u.id).join(",");
+    }else{
+      const u=usuarioDesde(kind,cell(row,num),"N°");if(u.error)return{n,error:u.error};id=u.id;
+    }
+    let pw="";const rut=cell(row,ix.rut);
+    if(rut!==""){const c=claveDesdeRut(rut);if(c.error&&act!=="del")return{n,error:c.error};pw=c.pw||""}
+    const curso=kind==="est"?normCurso(cell(row,ix.curso)):kind==="prof"?cell(row,ix.curso):"";
+    return{n,r:{act,role:kind,id,pw,pwAuto:true,name:cell(row,ix.name),curso,hijos,needCurso:kind==="est"}};
+  });
+  return buildPlan(rows,file);
+}
 function planFromAoa(aoa,file){
-  const head=(aoa[0]||[]).map(strip);
-  const col=names=>head.findIndex(h=>names.includes(h));
-  const ix={act:col(["accion"]),role:col(["rol","perfil","tipo"]),id:col(["usuario","id","user"]),pw:col(["contrasena","clave","password"]),name:col(["nombre","nombre completo"]),curso:col(["curso","cargo"]),hijos:col(["hijos","estudiantes","estudiantes a cargo","alumnos"])};
-  if(ix.id<0)return{fatal:"No encontré la columna «Usuario» en la primera fila. Descarga la plantilla y usa sus encabezados."};
-  const cell=(row,i)=>i<0?"":norm(row[i]);
+  const head=(aoa[0]||[]).map(strip),has=re=>head.some(h=>re.test(h));
+  const kind=has(/^n\W*\s*alumno$/)?"est":has(/^n\W*\s*profesor$/)?"prof":has(/^n\W*\s*estudiante(\s*[123])?$/)?"apo":"";
+  const generic=has(/^(usuario|id|user)$/);
+  if(!kind&&!generic)return{fatal:"No reconocí el formato. Descarga una plantilla (alumnos, apoderados o profesores) y usa sus encabezados."};
   const body=aoa.slice(1).map((row,k)=>({row,n:k+2})).filter(x=>x.row.some(v=>norm(v)!==""));
   if(!body.length)return{fatal:"El archivo no tiene filas con datos debajo de los encabezados."};
   if(body.length>2000)return{fatal:"El archivo tiene más de 2.000 filas. Divídelo en partes más pequeñas."};
+  if(kind)return planTemplate(kind,head,body,file);
+  const col=names=>head.findIndex(h=>names.includes(h));
+  const ix={act:col(["accion"]),role:col(["rol","perfil","tipo"]),id:col(["usuario","id","user"]),pw:col(["contrasena","clave","password"]),name:col(["nombre","nombre completo"]),curso:col(["curso","cargo"]),hijos:col(["hijos","estudiantes","estudiantes a cargo","alumnos"])};
+  const cell=(row,i)=>i<0?"":norm(row[i]);
   const rows=body.map(({row,n})=>{
     const a=strip(cell(row,ix.act)),act=a===""?"":pick(ACT_IN,a);
     if(act===undefined)return{n,error:`La acción «${cell(row,ix.act)}» no es válida. Usa agregar, modificar o eliminar.`};
     const h=cell(row,ix.hijos);
-    return{n,r:{act,role:cell(row,ix.role),id:cell(row,ix.id),pw:cell(row,ix.pw),name:cell(row,ix.name),curso:cell(row,ix.curso),hijos:h===""?undefined:h}};
+    return{n,r:{act:act==="reset"?"mod":act,role:cell(row,ix.role),id:cell(row,ix.id),pw:cell(row,ix.pw),name:cell(row,ix.name),curso:cell(row,ix.curso),hijos:h===""?undefined:h}};
   });
   return buildPlan(rows,file);
 }
@@ -831,7 +1022,7 @@ function downloadBlob(name,blob){const a=document.createElement("a");a.href=URL.
 function saveSheet(name,aoa,extra){
   if(typeof XLSX!=="undefined"){
     const wb=XLSX.utils.book_new(),ws=XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"]=[{wch:11},{wch:13},{wch:16},{wch:16},{wch:30},{wch:14},{wch:22}];
+    ws["!cols"]=aoa[0].map(h=>({wch:Math.max(14,String(h).length+4)}));
     XLSX.utils.book_append_sheet(wb,ws,"Usuarios");
     if(extra){const w2=XLSX.utils.aoa_to_sheet(extra);w2["!cols"]=[{wch:110}];XLSX.utils.book_append_sheet(wb,w2,"Instrucciones")}
     XLSX.writeFile(wb,name+".xlsx");
@@ -841,23 +1032,32 @@ function saveSheet(name,aoa,extra){
     downloadBlob(name+".csv",new Blob([csv],{type:"text/csv;charset=utf-8"}));
   }
 }
-function downloadTemplate(){
-  saveSheet("plantilla-usuarios-incosaf",[COLS],[
-    ["Cómo usar esta plantilla"],[""],
-    ["1. Completa la hoja «Usuarios» con una fila por persona y súbela en el panel de control."],
-    ["2. Acción: agregar, modificar o eliminar. Si la dejas vacía, se agrega el usuario o se actualiza si ya existe."],
-    ["3. Rol: estudiante, profesor o apoderado."],
-    ["4. Usuario: de 2 a 32 caracteres (letras, números, punto, guion o guion bajo). Es el nombre con el que inicia sesión."],
-    ["5. Contraseña: de 6 a 64 caracteres. Al modificar, déjala vacía para conservar la actual."],
-    ["6. Nombre y Curso: al modificar, las celdas vacías conservan el valor actual."],
-    ["7. Hijos (solo apoderados): usuarios de sus estudiantes separados por coma. Ejemplo: 1003, 1004"],
-    ["8. Para eliminar solo se necesitan Acción = eliminar y el Usuario."],
-    [""],["Ejemplos (no se cargan, son solo una guía)"],COLS,
-    ["agregar","estudiante","1003","clave1003","Javiera Pérez Díaz","2°B",""],
-    ["agregar","apoderado","apo2","clave2","Rodrigo Pérez Soto","Apoderado","1003"],
-    ["modificar","","1003","","","3°B",""],
-    ["eliminar","","1099","","","",""]
-  ]);
+const TEMPLATES={
+  est:{file:"plantilla-alumnos-incosaf",cols:["Acción","N° alumno","RUT","Nombre","Curso"],
+    ejemplos:[["","234","12.345.678-9","Juanito Pérez Soto","1°A"],["","235","23.456.789-0","María González Rojas","1°A"]],
+    notas:["N° alumno: número de 1 a 999. El usuario será 1000 + el número (ejemplo: 234 → usuario 1234).",
+      "RUT: la contraseña inicial son los 6 primeros dígitos del RUT del alumno (ejemplo: 12.345.678-9 → 123456).",
+      "Curso: por ejemplo 1°A. Se ordena solo: 1a, 1 A y 1°A son el mismo curso."]},
+  apo:{file:"plantilla-apoderados-incosaf",cols:["Acción","N° estudiante","N° estudiante 2","N° estudiante 3","RUT","Nombre"],
+    ejemplos:[["","234","","","5.111.222-3","Rosa Soto Díaz"],["","300","301","","6.222.333-4","Pedro Rojas Vera"]],
+    notas:["N° estudiante: el número del alumno al que representa. El usuario del apoderado será 3000 + ese número (alumno 234 → apoderado 3234).",
+      "Si tiene hermanos en el colegio, escribe sus números en «N° estudiante 2» y «3». El usuario se calcula con el primero.",
+      "RUT: la contraseña inicial son los 6 primeros dígitos del RUT DEL APODERADO (no del alumno).",
+      "Carga primero a los alumnos; si el estudiante todavía no existe, verás un aviso."]},
+  prof:{file:"plantilla-profesores-incosaf",cols:["Acción","N° profesor","RUT","Nombre","Cargo"],
+    ejemplos:[["","1","7.654.321-0","Sebastián Núñez López","Profesor jefe 1°A"],["","2","8.765.432-1","Ana Torres Vega","Inglés"]],
+    notas:["N° profesor: número de 1 a 999. El usuario será 2000 + el número (ejemplo: 1 → usuario 2001).",
+      "RUT: la contraseña inicial son los 6 primeros dígitos del RUT del profesor.",
+      "Cargo: opcional, por ejemplo «Profesor jefe 1°A»."]}
+};
+const ACCIONES=["Acción (columna A):",
+  "• Vacía: crea a la persona, o actualiza nombre y curso si ya existe. La contraseña NO cambia.",
+  "• modificar: solo actualiza a una persona que ya existe.",
+  "• eliminar: borra a la persona (en alumnos, también sus notas y anotaciones). Solo necesita el número.",
+  "• restablecer: vuelve la contraseña a los 6 primeros dígitos del RUT."];
+function downloadTemplate(kind){
+  const t=TEMPLATES[kind];if(!t)return;
+  saveSheet(t.file,[t.cols],[["Cómo usar esta plantilla"],[""],...t.notas.map((x,i)=>[`${i+1}. ${x}`]),[""],...ACCIONES.map(x=>[x]),[""],["Ejemplos (no se cargan, son solo una guía)"],t.cols,...t.ejemplos]);
 }
 function exportUsers(){
   const order={est:0,prof:1,apo:2};
@@ -874,8 +1074,8 @@ function vAdmin(){
   `<div class="stack">
     <section class="surface card rise" ${stag(1)} aria-labelledby="h-excel">
       <div class="cardhead"><div><h3 id="h-excel">Carga masiva con Excel</h3>
-        <p>Descarga la plantilla, completa una fila por persona y súbela. Verás un resumen antes de aplicar los cambios. Las contraseñas no se pueden leer ni exportar: déjalas vacías para conservarlas.</p></div>
-        <div class="actions"><button class="btn ghost sm" id="atpl">${ICON.down}Plantilla</button><button class="btn ghost sm" id="aexp">${ICON.down}Exportar usuarios</button>
+        <p>Descarga la plantilla (alumnos, apoderados o profesores), completa una fila por persona y súbela. Usuario: alumnos 1000 + N°, profesores 2000 + N°, apoderados 3000 + N° del estudiante. La contraseña inicial son los 6 primeros dígitos del RUT. Verás un resumen antes de aplicar los cambios.</p></div>
+        <div class="actions"><span class="hint" style="margin:0">Plantillas:</span><button class="btn ghost sm" data-tpl="est">${ICON.down}Alumnos</button><button class="btn ghost sm" data-tpl="apo">${ICON.down}Apoderados</button><button class="btn ghost sm" data-tpl="prof">${ICON.down}Profesores</button><button class="btn ghost sm" id="aexp">${ICON.down}Exportar usuarios</button>
           <label class="btn sm filebtn">${ICON.up}Subir Excel<input type="file" id="afile" accept=".xlsx,.xls,.csv"></label></div></div>
       <div id="aplan" aria-live="polite"></div>
     </section>
@@ -923,7 +1123,8 @@ function renderPlan(){
   if(p.fatal){box.innerHTML=`<div class="err" role="alert">${esc(p.fatal)}</div>`;return}
   const c=p.c,n=p.ops.length;
   box.innerHTML=`<div class="plan"><b>${esc(p.file)}</b> · ${p.total} fila${p.total===1?"":"s"} leída${p.total===1?"":"s"}
-    <div class="sum">${c.add?`<span class="a">${c.add} nuevo${c.add===1?"":"s"}</span>`:""}${c.mod?`<span class="m">${c.mod} modificado${c.mod===1?"":"s"}</span>`:""}${c.del?`<span class="d">${c.del} a eliminar</span>`:""}${c.err?`<span class="e">${c.err} con error${c.err===1?"":"es"}</span>`:""}${!n&&!c.err?"<span>Sin cambios</span>":""}</div>
+    <div class="sum">${c.add?`<span class="a">${c.add} nuevo${c.add===1?"":"s"}</span>`:""}${c.mod?`<span class="m">${c.mod} modificado${c.mod===1?"":"s"}</span>`:""}${c.reset?`<span class="m">${c.reset} contraseña${c.reset===1?"":"s"} restablecida${c.reset===1?"":"s"}</span>`:""}${c.del?`<span class="d">${c.del} a eliminar</span>`:""}${c.err?`<span class="e">${c.err} con error${c.err===1?"":"es"}</span>`:""}${!n&&!c.err?"<span>Sin cambios</span>":""}</div>
+    ${p.preview.length?`<div class="twrap" style="margin:12px 0"><table class="utable" style="min-width:520px"><thead><tr><th scope="col">Usuario</th><th scope="col">Nombre</th><th scope="col">Rol</th><th scope="col">Curso o cargo</th><th scope="col">Acción</th></tr></thead><tbody>${p.preview.slice(0,8).map(x=>`<tr><td class="id">${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(ROLES[x.role])}</td><td>${esc(x.curso)||"—"}</td><td>${({add:"Nuevo",mod:"Actualiza",reset:"Restablece clave"})[x.type]}</td></tr>`).join("")}</tbody></table></div>${p.preview.length>8?`<p class="hint">y ${p.preview.length-8} más…</p>`:""}`:""}
     ${c.del?`<p class="hint warn">Se eliminarán ${c.del} usuario${c.del===1?"":"s"} y sus notas. No se puede deshacer.</p>`:""}
     ${p.issues.length?`<ul class="issues">${p.issues.map(i=>`<li class="${i.t}">${i.n?`<b>Fila ${i.n}:</b> `:""}${esc(i.m)}</li>`).join("")}</ul>`:""}
     ${c.err&&n?'<p class="hint">Las filas con error no se aplican; el resto sí.</p>':""}
@@ -1036,7 +1237,7 @@ async function applyPlan(){
   refreshAdmin();
 }
 function bindAdmin(){
-  $("#atpl").onclick=downloadTemplate;
+  document.querySelectorAll("[data-tpl]").forEach(b=>b.onclick=()=>downloadTemplate(b.dataset.tpl));
   $("#aexp").onclick=exportUsers;
   $("#anew").onclick=()=>openForm();
   $("#afile").onchange=async ev=>{
@@ -1060,6 +1261,7 @@ function bindAdmin(){
 }
 
 /* ===== ARRANQUE ===== */
+window.addEventListener("beforeunload",e=>{if(me&&view==="ingreso"&&sheetDirty()){e.preventDefault();e.returnValue=""}});
 if(sb)sb.auth.onAuthStateChange(ev=>{if(ev==="SIGNED_OUT"&&me)setTimeout(()=>logout("Tu sesión se cerró. Ingresa de nuevo."),0)});
 (async()=>{
   const fallback=setTimeout(()=>$("#login").classList.remove("boot"),3000);
