@@ -887,7 +887,7 @@ function mutate(sim,r){
   if(!ID_RE.test(id))return E(`El usuario «${raw}» no es válido. Usa de 2 a 32 letras, números, punto, guion o guion bajo, sin espacios, y empieza con letra o número.`,"id");
   const ex=pick(sim,id)||null;
   if(ex&&ex.role==="adm")return E("El administrador no se puede cambiar desde aquí.","id");
-  if(r.act==="del"){if(!ex)return E(`No existe el usuario «${id}» para eliminar.`,"id");delete sim[id];return{type:"del",id,op:{type:"del",id}}}
+  if(r.act==="del"){if(!ex)return E(`No existe el usuario «${id}» para eliminar.`,"id");delete sim[id];return{type:"del",id,role:ex.role,op:{type:"del",id}}}
   if(r.act==="reset"){
     if(!ex)return E(`No existe el usuario «${id}» para restablecer su contraseña.`,"id");
     if(!r.pw)return E("Falta el RUT para restablecer la contraseña.","pw");
@@ -909,7 +909,10 @@ function mutate(sim,r){
   if(curso.length>40)return E("El curso o cargo supera los 40 caracteres.","curso");
   if(r.needCurso&&!curso)return E("Falta el curso (ejemplo: 1°A).","curso");
   const u={uid:ex?ex.uid:null,role,name,curso};
-  if(role==="apo")u.hijos=r.hijos===undefined?((ex&&ex.hijos)||[]):parseHijos(r.hijos);
+  if(role==="apo"){
+    const prev=(ex&&ex.hijos)||[];
+    u.hijos=r.hijos===undefined?prev:r.hijosMerge?[...new Set([...prev,...parseHijos(r.hijos)])]:parseHijos(r.hijos);
+  }
   sim[id]=u;
   const type=ex?"mod":"add";
   return{type,id,info:{id,name,role,curso},op:{type,id,pw:pw||undefined,role,name,curso,hijos:role==="apo"&&r.hijos!==undefined?u.hijos:undefined}};
@@ -917,16 +920,25 @@ function mutate(sim,r){
 
 function buildPlan(rows,file){
   const sim=structuredClone(USERS),ops=[],issues=[],preview=[],c={add:0,mod:0,del:0,reset:0,err:0};
-  rows.forEach(({n,r,error})=>{
-    const res=error?E(error):mutate(sim,r);
-    if(res.error){c.err++;issues.push({n,t:"e",m:res.error})}else{c[res.type]++;ops.push(res);if(res.info)preview.push({...res.info,type:res.type})}
-  });
+  const run=e=>{
+    const res=e.error?E(e.error):mutate(sim,e.r);
+    if(res.error){e.failed=true;c.err++;issues.push({n:e.n,t:"e",m:(e.label?e.label+": ":"")+res.error});return}
+    c[res.type]++;ops.push(res);if(res.info)preview.push({...res.info,type:res.type});
+    if(res.type==="del"&&res.role==="est"){ // un apoderado sin más hijos ya no tiene sentido: se elimina con su último alumno
+      Object.entries(sim).forEach(([aid,au])=>{
+        if(au.role!=="apo"||!(au.hijos||[]).includes(res.id))return;
+        au.hijos=au.hijos.filter(h=>h!==res.id);
+        if(!au.hijos.length){const d=mutate(sim,{act:"del",id:aid});if(!d.error){c.del++;ops.push(d)}}
+      });
+    }
+  };
+  rows.forEach(e=>{if(e.parent&&e.parent.failed)return;run(e)});
   const touched=new Set(ops.map(o=>o.id));
   touched.forEach(id=>{const u=pick(sim,id);if(u&&u.role==="apo"){
     const miss=(u.hijos||[]).filter(h=>!(pick(sim,h)&&sim[h].role==="est"));
     if(miss.length)issues.push({n:0,t:"w",m:`El apoderado «${id}» tiene estudiantes que aún no existen: ${miss.join(", ")}.`});
   }});
-  return{sim,ops,issues,preview,c,file,total:rows.length};
+  return{sim,ops,issues,preview,c,file,total:new Set(rows.map(e=>e.n)).size};
 }
 
 /* Reglas de usuario y contraseña (plantillas): alumno 1000+N°, profesor 2000+N°, apoderado 3000+N° del estudiante.
@@ -947,36 +959,46 @@ function claveDesdeRut(rut){
 }
 function planTemplate(kind,head,body,file){
   const f=re=>head.findIndex(h=>re.test(h)),cell=(row,i)=>i<0?"":norm(row[i]);
-  const ix={act:f(/^accion$/),rut:f(/^rut$/),name:f(/^nombre/),curso:f(/^(curso|cargo)$/)};
-  const num=f({est:/^n\W*\s*alumno$/,prof:/^n\W*\s*profesor$/,apo:/^n\W*\s*estudiante(\s*1)?$/}[kind]);
-  const num2=f(/^n\W*\s*estudiante\s*2$/),num3=f(/^n\W*\s*estudiante\s*3$/);
-  const rows=body.map(({row,n})=>{
-    const a=strip(cell(row,ix.act)),act=a===""?"":pick(ACT_IN,a);
-    if(act===undefined)return{n,error:`La acción «${cell(row,ix.act)}» no es válida. Usa agregar, modificar, eliminar o restablecer.`};
-    let id,hijos;
-    if(kind==="apo"){
-      const ids=[];
-      for(const [i,lab] of [[num,"N° estudiante"],[num2,"N° estudiante 2"],[num3,"N° estudiante 3"]]){
-        const v=cell(row,i);if(v==="")continue;
-        const u=usuarioDesde("est",v,lab);if(u.error)return{n,error:u.error};ids.push(u);
-      }
-      if(!ids.length)return{n,error:"Falta el N° del estudiante."};
-      id=String(PREFIX.apo+ids[0].n);hijos=ids.map(u=>u.id).join(",");
-    }else{
-      const u=usuarioDesde(kind,cell(row,num),"N°");if(u.error)return{n,error:u.error};id=u.id;
-    }
-    let pw="";const rut=cell(row,ix.rut);
-    if(rut!==""){const c=claveDesdeRut(rut);if(c.error&&act!=="del")return{n,error:c.error};pw=c.pw||""}
-    const curso=kind==="est"?normCurso(cell(row,ix.curso)):kind==="prof"?cell(row,ix.curso):"";
-    return{n,r:{act,role:kind,id,pw,pwAuto:true,name:cell(row,ix.name),curso,hijos,needCurso:kind==="est"}};
+  const ix={act:f(/^accion$/),curso:f(/^(curso|cargo)$/),
+    rut:f(/^rut(\s*(del\s*)?(alumno|profesor))?$/),name:f(/^nombre(\s*(del\s*)?(alumno|profesor))?$/),
+    rutA:f(/^rut\s*(del\s*)?apoderad[oa]$/),nameA:f(/^nombre\s*(del\s*)?apoderad[oa]$/)};
+  const num=f(kind==="est"?/^n\W*\s*alumno$/:/^n\W*\s*profesor$/);
+  const keyRut=v=>norm(v).replace(/[.\s-]/g,"").toUpperCase();
+  // hermanos: mismo RUT de apoderado dentro del archivo = una sola cuenta de apoderado
+  const grupos={};
+  if(kind==="est")body.forEach(({row})=>{
+    const a=strip(cell(row,ix.act));if(a==="eliminar"||a==="borrar"||a==="quitar"||a==="del")return;
+    const rutA=cell(row,ix.rutA),u=usuarioDesde("est",cell(row,num),"N°");
+    if(rutA!==""&&!u.error)(grupos[keyRut(rutA)]??={n:u.n,hijos:[]}).hijos.push(u.id);
   });
-  return buildPlan(rows,file);
+  const rows=[],apoRows=[]; // los apoderados se crean después de todos los alumnos (pueden vincular a varios)
+  body.forEach(({row,n})=>{
+    const a=strip(cell(row,ix.act)),act=a===""?"":pick(ACT_IN,a);
+    if(act===undefined)return rows.push({n,error:`La acción «${cell(row,ix.act)}» no es válida. Usa agregar, modificar, eliminar o restablecer.`});
+    const u=usuarioDesde(kind,cell(row,num),"N°");if(u.error)return rows.push({n,error:u.error});
+    let pw="";const rut=cell(row,ix.rut);
+    if(rut!==""){const c=claveDesdeRut(rut);if(c.error&&act!=="del")return rows.push({n,error:c.error});pw=c.pw||""}
+    const curso=kind==="est"?normCurso(cell(row,ix.curso)):cell(row,ix.curso);
+    const main={n,r:{act,role:kind,id:u.id,pw,pwAuto:true,name:cell(row,ix.name),curso,needCurso:kind==="est"}};
+    rows.push(main);
+    if(kind!=="est"||act==="del")return;
+    const rutA=cell(row,ix.rutA),nameA=cell(row,ix.nameA);
+    if(rutA===""&&nameA==="")return; // sin datos de apoderado: solo se crea el alumno
+    const g=grupos[keyRut(rutA)];
+    if(g&&g.hijos[0]!==u.id)return;  // el apoderado ya lo crea el primer hermano de la lista
+    const fail=error=>apoRows.push({n,error,label:"Apoderado",parent:main});
+    if(rutA==="")return fail("Falta el RUT del apoderado (se usa para su contraseña).");
+    if(nameA==="")return fail("Falta el nombre del apoderado.");
+    const c=claveDesdeRut(rutA);if(c.error)return fail(c.error);
+    apoRows.push({n,label:"Apoderado",parent:main,r:{act:act==="reset"?"reset":"",role:"apo",id:String(PREFIX.apo+g.n),pw:c.pw,pwAuto:true,name:nameA,curso:"",hijos:g.hijos.join(","),hijosMerge:true}});
+  });
+  return buildPlan([...rows,...apoRows],file);
 }
 function planFromAoa(aoa,file){
   const head=(aoa[0]||[]).map(strip),has=re=>head.some(h=>re.test(h));
-  const kind=has(/^n\W*\s*alumno$/)?"est":has(/^n\W*\s*profesor$/)?"prof":has(/^n\W*\s*estudiante(\s*[123])?$/)?"apo":"";
+  const kind=has(/^n\W*\s*alumno$/)?"est":has(/^n\W*\s*profesor$/)?"prof":"";
   const generic=has(/^(usuario|id|user)$/);
-  if(!kind&&!generic)return{fatal:"No reconocí el formato. Descarga una plantilla (alumnos, apoderados o profesores) y usa sus encabezados."};
+  if(!kind&&!generic)return{fatal:"No reconocí el formato. Descarga una plantilla (alumnos o profesores) y usa sus encabezados."};
   const body=aoa.slice(1).map((row,k)=>({row,n:k+2})).filter(x=>x.row.some(v=>norm(v)!==""));
   if(!body.length)return{fatal:"El archivo no tiene filas con datos debajo de los encabezados."};
   if(body.length>2000)return{fatal:"El archivo tiene más de 2.000 filas. Divídelo en partes más pequeñas."};
@@ -1033,17 +1055,13 @@ function saveSheet(name,aoa,extra){
   }
 }
 const TEMPLATES={
-  est:{file:"plantilla-alumnos-incosaf",cols:["Acción","N° alumno","RUT","Nombre","Curso"],
-    ejemplos:[["","234","12.345.678-9","Juanito Pérez Soto","1°A"],["","235","23.456.789-0","María González Rojas","1°A"]],
-    notas:["N° alumno: número de 1 a 999. El usuario será 1000 + el número (ejemplo: 234 → usuario 1234).",
-      "RUT: la contraseña inicial son los 6 primeros dígitos del RUT del alumno (ejemplo: 12.345.678-9 → 123456).",
+  est:{file:"plantilla-alumnos-incosaf",cols:["Acción","N° alumno","RUT alumno","Nombre alumno","Curso","RUT apoderado","Nombre apoderado"],
+    ejemplos:[["","234","12.345.678-9","Juanito Pérez Soto","1°A","5.111.222-3","Rosa Soto Díaz"],["","300","23.456.789-0","María Rojas Vera","2°B","6.222.333-4","Pedro Rojas Díaz"],["","301","24.567.890-1","Luis Rojas Vera","1°B","6.222.333-4","Pedro Rojas Díaz"]],
+    notas:["N° alumno: número de 1 a 999. Usuario del alumno = 1000 + N° (234 → 1234). Usuario del apoderado = 3000 + N° (234 → 3234).",
+      "RUT alumno y RUT apoderado: la contraseña inicial de cada uno son los 6 primeros dígitos de su propio RUT (12.345.678-9 → 123456).",
+      "El apoderado se crea automáticamente junto al alumno y queda vinculado a él. Si no escribes datos de apoderado, se crea solo el alumno.",
+      "Hermanos: si dos alumnos tienen el mismo RUT de apoderado (como los ejemplos 300 y 301), comparten una sola cuenta de apoderado; su usuario se calcula con el primero de la lista.",
       "Curso: por ejemplo 1°A. Se ordena solo: 1a, 1 A y 1°A son el mismo curso."]},
-  apo:{file:"plantilla-apoderados-incosaf",cols:["Acción","N° estudiante","N° estudiante 2","N° estudiante 3","RUT","Nombre"],
-    ejemplos:[["","234","","","5.111.222-3","Rosa Soto Díaz"],["","300","301","","6.222.333-4","Pedro Rojas Vera"]],
-    notas:["N° estudiante: el número del alumno al que representa. El usuario del apoderado será 3000 + ese número (alumno 234 → apoderado 3234).",
-      "Si tiene hermanos en el colegio, escribe sus números en «N° estudiante 2» y «3». El usuario se calcula con el primero.",
-      "RUT: la contraseña inicial son los 6 primeros dígitos del RUT DEL APODERADO (no del alumno).",
-      "Carga primero a los alumnos; si el estudiante todavía no existe, verás un aviso."]},
   prof:{file:"plantilla-profesores-incosaf",cols:["Acción","N° profesor","RUT","Nombre","Cargo"],
     ejemplos:[["","1","7.654.321-0","Sebastián Núñez López","Profesor jefe 1°A"],["","2","8.765.432-1","Ana Torres Vega","Inglés"]],
     notas:["N° profesor: número de 1 a 999. El usuario será 2000 + el número (ejemplo: 1 → usuario 2001).",
@@ -1053,8 +1071,8 @@ const TEMPLATES={
 const ACCIONES=["Acción (columna A):",
   "• Vacía: crea a la persona, o actualiza nombre y curso si ya existe. La contraseña NO cambia.",
   "• modificar: solo actualiza a una persona que ya existe.",
-  "• eliminar: borra a la persona (en alumnos, también sus notas y anotaciones). Solo necesita el número.",
-  "• restablecer: vuelve la contraseña a los 6 primeros dígitos del RUT."];
+  "• eliminar: borra a la persona. En alumnos, también sus notas y anotaciones, y a su apoderado si no tiene otros hijos. Solo necesita el número.",
+  "• restablecer: vuelve la contraseña a los 6 primeros dígitos del RUT (en alumnos, también la del apoderado si escribes su RUT)."];
 function downloadTemplate(kind){
   const t=TEMPLATES[kind];if(!t)return;
   saveSheet(t.file,[t.cols],[["Cómo usar esta plantilla"],[""],...t.notas.map((x,i)=>[`${i+1}. ${x}`]),[""],...ACCIONES.map(x=>[x]),[""],["Ejemplos (no se cargan, son solo una guía)"],t.cols,...t.ejemplos]);
@@ -1074,8 +1092,8 @@ function vAdmin(){
   `<div class="stack">
     <section class="surface card rise" ${stag(1)} aria-labelledby="h-excel">
       <div class="cardhead"><div><h3 id="h-excel">Carga masiva con Excel</h3>
-        <p>Descarga la plantilla (alumnos, apoderados o profesores), completa una fila por persona y súbela. Usuario: alumnos 1000 + N°, profesores 2000 + N°, apoderados 3000 + N° del estudiante. La contraseña inicial son los 6 primeros dígitos del RUT. Verás un resumen antes de aplicar los cambios.</p></div>
-        <div class="actions"><span class="hint" style="margin:0">Plantillas:</span><button class="btn ghost sm" data-tpl="est">${ICON.down}Alumnos</button><button class="btn ghost sm" data-tpl="apo">${ICON.down}Apoderados</button><button class="btn ghost sm" data-tpl="prof">${ICON.down}Profesores</button><button class="btn ghost sm" id="aexp">${ICON.down}Exportar usuarios</button>
+        <p>Descarga la plantilla de alumnos (incluye al apoderado en la misma fila) o la de profesores, complétala y súbela. Usuario: alumnos 1000 + N°, apoderados 3000 + N°, profesores 2000 + N°. La contraseña inicial son los 6 primeros dígitos del RUT de cada persona. Verás un resumen antes de aplicar los cambios.</p></div>
+        <div class="actions"><span class="hint" style="margin:0">Plantillas:</span><button class="btn ghost sm" data-tpl="est">${ICON.down}Alumnos</button><button class="btn ghost sm" data-tpl="prof">${ICON.down}Profesores</button><button class="btn ghost sm" id="aexp">${ICON.down}Exportar usuarios</button>
           <label class="btn sm filebtn">${ICON.up}Subir Excel<input type="file" id="afile" accept=".xlsx,.xls,.csv"></label></div></div>
       <div id="aplan" aria-live="polite"></div>
     </section>
@@ -1124,7 +1142,7 @@ function renderPlan(){
   const c=p.c,n=p.ops.length;
   box.innerHTML=`<div class="plan"><b>${esc(p.file)}</b> · ${p.total} fila${p.total===1?"":"s"} leída${p.total===1?"":"s"}
     <div class="sum">${c.add?`<span class="a">${c.add} nuevo${c.add===1?"":"s"}</span>`:""}${c.mod?`<span class="m">${c.mod} modificado${c.mod===1?"":"s"}</span>`:""}${c.reset?`<span class="m">${c.reset} contraseña${c.reset===1?"":"s"} restablecida${c.reset===1?"":"s"}</span>`:""}${c.del?`<span class="d">${c.del} a eliminar</span>`:""}${c.err?`<span class="e">${c.err} con error${c.err===1?"":"es"}</span>`:""}${!n&&!c.err?"<span>Sin cambios</span>":""}</div>
-    ${p.preview.length?`<div class="twrap" style="margin:12px 0"><table class="utable" style="min-width:520px"><thead><tr><th scope="col">Usuario</th><th scope="col">Nombre</th><th scope="col">Rol</th><th scope="col">Curso o cargo</th><th scope="col">Acción</th></tr></thead><tbody>${p.preview.slice(0,8).map(x=>`<tr><td class="id">${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(ROLES[x.role])}</td><td>${esc(x.curso)||"—"}</td><td>${({add:"Nuevo",mod:"Actualiza",reset:"Restablece clave"})[x.type]}</td></tr>`).join("")}</tbody></table></div>${p.preview.length>8?`<p class="hint">y ${p.preview.length-8} más…</p>`:""}`:""}
+    ${p.preview.length?`<div class="twrap" style="margin:12px 0"><table class="utable" style="min-width:520px"><thead><tr><th scope="col">Usuario</th><th scope="col">Nombre</th><th scope="col">Rol</th><th scope="col">Curso o cargo</th><th scope="col">Acción</th></tr></thead><tbody>${p.preview.slice(0,12).map(x=>`<tr><td class="id">${esc(x.id)}</td><td>${esc(x.name)}</td><td>${esc(ROLES[x.role])}</td><td>${esc(x.curso)||"—"}</td><td>${({add:"Nuevo",mod:"Actualiza",reset:"Restablece clave"})[x.type]}</td></tr>`).join("")}</tbody></table></div>${p.preview.length>12?`<p class="hint">y ${p.preview.length-12} más…</p>`:""}`:""}
     ${c.del?`<p class="hint warn">Se eliminarán ${c.del} usuario${c.del===1?"":"s"} y sus notas. No se puede deshacer.</p>`:""}
     ${p.issues.length?`<ul class="issues">${p.issues.map(i=>`<li class="${i.t}">${i.n?`<b>Fila ${i.n}:</b> `:""}${esc(i.m)}</li>`).join("")}</ul>`:""}
     ${c.err&&n?'<p class="hint">Las filas con error no se aplican; el resto sí.</p>':""}

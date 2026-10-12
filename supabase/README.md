@@ -61,20 +61,20 @@ La dirección quedará como `https://<usuario>.github.io/INCOSAFINTRANET/`.
 3. Entra como profesor, ingresa una nota y una anotación; entra como estudiante y como apoderado para comprobar qué ve cada uno.
 
 ## Cómo cargar usuarios con Excel
-Hay tres plantillas (botones **Alumnos**, **Apoderados** y **Profesores** en el panel). Una fila por persona:
+Hay dos plantillas (botones **Alumnos** y **Profesores** en el panel). Una fila por persona. **La plantilla de alumnos incluye al apoderado en la misma fila** y el sistema crea las dos cuentas.
 
 | Plantilla | Columnas | Usuario | Contraseña inicial |
 |---|---|---|---|
-| Alumnos | Acción · N° alumno · RUT · Nombre · Curso | 1000 + N° (234 → `1234`) | 6 primeros dígitos del RUT del alumno |
+| Alumnos | Acción · N° alumno · RUT alumno · Nombre alumno · Curso · RUT apoderado · Nombre apoderado | Alumno: 1000 + N° (234 → `1234`). Apoderado: 3000 + N° (→ `3234`) | 6 primeros dígitos del RUT de cada uno |
 | Profesores | Acción · N° profesor · RUT · Nombre · Cargo | 2000 + N° (1 → `2001`) | 6 primeros dígitos de su RUT |
-| Apoderados | Acción · N° estudiante (y 2, 3 si hay hermanos) · RUT · Nombre | 3000 + N° del estudiante (234 → `3234`) | 6 primeros dígitos del RUT del apoderado |
 
 - El RUT solo se usa para calcular la contraseña inicial; **no se guarda**. Acepta `12.345.678-9`, `12345678-9` o `12345678`.
-- **Acción**: vacía = crea, o actualiza nombre y curso si ya existe (**la contraseña no cambia**). `modificar`, `eliminar` y `restablecer` (vuelve la contraseña a los 6 primeros dígitos del RUT).
+- Si no escribes datos de apoderado, se crea solo el alumno. Si escribes uno de los dos datos del apoderado (RUT o nombre) y falta el otro, el alumno se crea y se avisa del error del apoderado.
+- **Hermanos:** si dos alumnos tienen el mismo RUT de apoderado dentro del archivo, comparten una sola cuenta de apoderado (su usuario se calcula con el primero de la lista). Si los hermanos se cargan en archivos distintos, quedan con cuentas separadas.
+- Si el segundo apoderado de un alumno (mamá y papá) también debe entrar, se crea a mano con **Nuevo usuario** y otro nombre de usuario.
+- **Acción**: vacía = crea, o actualiza nombres y curso si ya existe (**las contraseñas no cambian**). `modificar`, `eliminar` y `restablecer` (vuelve las contraseñas a los 6 primeros dígitos del RUT).
+- **Eliminar** a un alumno borra también sus notas y anotaciones, y a su apoderado si no tiene otros hijos.
 - El curso se ordena solo: `1a`, `1 A` y `1°A` son el mismo curso.
-- Carga primero a los alumnos y después a los apoderados. Si un apoderado se carga antes, vuelve a subir su fila para vincularlo.
-- Si dos apoderados comparten estudiante (mamá y papá), el segundo se crea a mano con **Nuevo usuario** y otro nombre de usuario.
-- Eliminar a un estudiante borra también sus notas y anotaciones.
 - Antes de aplicar ves un resumen con los usuarios que se crearán y los errores por fila.
 - **Exportar usuarios** descarga la lista actual (sin contraseñas) en un formato genérico que también se puede volver a subir.
 
