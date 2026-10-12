@@ -233,6 +233,11 @@ main:focus{outline:none}
 .hint{font-size:13.5px;color:var(--muted);margin:10px 0}
 .hint.warn{color:var(--bad);font-weight:600}
 .plan{border-top:1px solid var(--line);margin-top:20px;padding-top:18px}
+.more{display:flex;align-items:center;gap:14px;justify-content:center;margin-top:14px;color:var(--muted);font-size:13.5px;font-weight:600}
+.advanced{margin-top:6px}
+.advanced>summary{cursor:pointer;color:var(--muted);font-size:13.5px;font-weight:600;padding:8px 4px;width:max-content;border-radius:8px}
+.advanced>summary:hover{color:var(--ink)}
+.advanced[open]>summary{margin-bottom:10px}
 .credbox{margin:14px 0}
 .credbox .hint{margin:8px 0 0;max-width:68ch}
 .sum{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
@@ -877,7 +882,7 @@ const ROLE_IN={est:"est",estudiante:"est",alumno:"est",alumna:"est",prof:"prof",
 const ACT_IN={agregar:"add",crear:"add",nuevo:"add",add:"add",modificar:"mod",editar:"mod",actualizar:"mod",mod:"mod",eliminar:"del",borrar:"del",quitar:"del",del:"del",restablecer:"reset",resetear:"reset",reiniciar:"reset",reset:"reset"};
 const pick=(o,k)=>Object.hasOwn(o,k)?o[k]:undefined;
 const parseHijos=v=>[...new Set(norm(v).toLowerCase().split(/[,;\s]+/).filter(Boolean))];
-const adm={q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false,t:0};
+const adm={q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false,prog:"",limit:50,t:0};
 const COLS=["Acción","Rol","Usuario","Contraseña","Nombre","Curso","Hijos"];
 const E=(error,field)=>({error,field});
 
@@ -1129,7 +1134,41 @@ function vAdmin(){
       </div>
       <div id="utable"></div>
     </section>
+    <details class="advanced" id="adv">
+      <summary>Opciones avanzadas</summary>
+      <section class="surface card" aria-labelledby="h-del">
+        <div class="cardhead"><div><h3 id="h-del">Eliminar usuarios en bloque</h3>
+          <p>Borra a muchas personas de una vez, junto con todas sus notas y anotaciones. No se puede deshacer. Tu cuenta de administrador no se toca.</p></div></div>
+        <div class="form">
+          <div><label for="dscope">Qué eliminar</label><select id="dscope"><option value="all">Todos: alumnos, apoderados y profesores</option><option value="est">Solo alumnos y apoderados</option><option value="prof">Solo profesores</option></select></div>
+          <div><label for="dconf">Para confirmar, escribe ELIMINAR</label><input id="dconf" autocomplete="off" placeholder="ELIMINAR"></div>
+        </div>
+        <p class="hint warn" id="dinfo" aria-live="polite"></p>
+        <button type="button" class="btn danger" id="dgo" disabled>Eliminar usuarios</button>
+      </section>
+    </details>
   </div>`;
+}
+/* ---- eliminar usuarios en bloque ---- */
+const delScope=()=>Object.entries(USERS).filter(([,u])=>{const sc=$("#dscope").value;return u.role!=="adm"&&(sc==="all"||(sc==="est"&&(u.role==="est"||u.role==="apo"))||(sc==="prof"&&u.role==="prof"))});
+function renderDel(){
+  const l=delScope(),c={est:0,apo:0,prof:0};l.forEach(([,u])=>c[u.role]++);
+  $("#dinfo").textContent=l.length?`Se eliminarán ${l.length} usuario${l.length===1?"":"s"} (${c.est} alumno${c.est===1?"":"s"}, ${c.apo} apoderado${c.apo===1?"":"s"}, ${c.prof} profesor${c.prof===1?"":"es"}) con todas sus notas y anotaciones.`:"No hay usuarios para eliminar con esta opción.";
+  $("#dgo").disabled=adm.busy||!l.length||norm($("#dconf").value).toUpperCase()!=="ELIMINAR";
+}
+async function deleteBulk(){
+  const l=delScope();if(!l.length||adm.busy)return;
+  const btn=$("#dgo");adm.busy=true;btn.disabled=true;
+  let fails=[],ok=0;
+  try{
+    const results=await runOps(l.map(([id])=>({type:"del",id})),(d,t)=>{btn.textContent=`Eliminando… ${d} de ${t}`});
+    fails=results.filter(r=>!r.ok);ok=results.length-fails.length;
+  }catch(e){fails=[{id:"",error:e.message}]}
+  try{await loadAdminData()}catch(e){}
+  adm.busy=false;adm.plan=null;adm.report=fails.length?{ok,fails,warns:[]}:null;
+  $("#dconf").value="";btn.textContent="Eliminar usuarios";
+  toast(ok?`${ok} usuario${ok===1?"":"s"} eliminado${ok===1?"":"s"}`:"No se pudo eliminar",!!ok);
+  refreshAdmin();renderDel();
 }
 function renderSeg(){
   const c=counts();
@@ -1148,9 +1187,10 @@ function renderTable(){
     $("#utable").innerHTML=`<div class="empty"><b>${adm.q?"Sin resultados":"Aún no hay usuarios"}</b>${adm.q?"Prueba con otro nombre o usuario.":"Agrega uno con «Nuevo usuario» o sube un Excel."}</div>`;
     return;
   }
+  const total=list.length;list.length=Math.min(total,adm.limit);
   $("#utable").innerHTML=`<div class="twrap" tabindex="0" role="region" aria-label="Tabla de usuarios"><table class="utable"><thead><tr><th scope="col">Usuario</th><th scope="col">Nombre</th><th scope="col">Rol</th><th scope="col">Curso o cargo</th><th scope="col"><span class="sr">Acciones</span></th></tr></thead><tbody>${
     list.map(([id,u])=>`<tr><td class="id">${esc(id)}</td><td>${esc(u.name)}${u.role==="apo"&&(u.hijos||[]).length?`<small class="sub">Estudiantes: ${esc(u.hijos.join(", "))}</small>`:""}</td><td><span class="tag role-${esc(u.role)}">${esc(ROLES[u.role])}</span></td><td>${esc(u.curso)||"—"}</td><td class="act">${u.role!=="adm"||u.uid===me.id?`<button type="button" class="btn ghost sm" data-edit="${esc(id)}" aria-label="Editar a ${esc(u.name)}">Editar</button>`:""}${u.role==="adm"?"":`<button type="button" class="btn ghost danger sm" data-del="${esc(id)}" aria-label="Eliminar a ${esc(u.name)}">Eliminar</button>`}</td></tr>`).join("")
-  }</tbody></table></div>`;
+  }</tbody></table></div>${total>list.length?`<div class="more"><span>Mostrando ${list.length} de ${total}</span><button type="button" class="btn ghost sm" id="amore">Mostrar más</button></div>`:(total>50?`<div class="more"><span>Mostrando los ${total}</span></div>`:"")}`;
 }
 function renderPlan(){
   const box=$("#aplan"),p=adm.plan,r=adm.report;
@@ -1171,7 +1211,7 @@ function renderPlan(){
     ${p.issues.length?`<ul class="issues">${p.issues.map(i=>`<li class="${i.t}">${i.n?`<b>Fila ${i.n}:</b> `:""}${esc(i.m)}</li>`).join("")}</ul>`:""}
     ${c.err&&n?'<p class="hint">Las filas con error no se aplican; el resto sí.</p>':""}
     ${(p.creds&&p.creds.length)?`<div class="credbox"><button type="button" class="btn ghost sm" id="acreds">${ICON.down}Descargar credenciales</button><p class="hint">Excel con el usuario y la contraseña inicial de cada persona de este archivo, para entregarlas. Contiene contraseñas: guárdalo con cuidado y bórralo cuando termines. Si le cambiaste a alguien la contraseña desde el panel, la de la lista ya no le sirve.</p></div>`:""}
-    <div class="actions"><button type="button" class="btn gold" id="aapply" ${n&&!adm.busy?"":"disabled"}>${adm.busy?"Aplicando…":`Aplicar ${n} cambio${n===1?"":"s"}`}</button><button type="button" class="btn ghost" id="acancel" ${adm.busy?"disabled":""}>Cancelar</button></div></div>`;
+    <div class="actions"><button type="button" class="btn gold" id="aapply" ${n&&!adm.busy?"":"disabled"}>${adm.busy?"Aplicando…"+(adm.prog?" "+adm.prog:""):`Aplicar ${n} cambio${n===1?"":"s"}`}</button><button type="button" class="btn ghost" id="acancel" ${adm.busy?"disabled":""}>Cancelar</button></div></div>`;
 }
 function renderForm(){
   const box=$("#aform");
@@ -1195,7 +1235,7 @@ function renderForm(){
   $("#uform").addEventListener("input",()=>{$("#ferr").classList.add("hidden");$("#uform").querySelectorAll("[aria-invalid]").forEach(x=>x.removeAttribute("aria-invalid"))});
   $("#uform").onsubmit=submitForm;
 }
-function refreshAdmin(){renderSeg();renderTable();renderForm();renderPlan()}
+function refreshAdmin(){renderSeg();renderTable();renderForm();renderPlan();if($("#dscope"))renderDel()}
 function openForm(id){
   adm.form=true;adm.editing=id||null;renderForm();
   const f=$(id?"#f-pw":"#f-id");f.focus();$("#aform").scrollIntoView({block:"nearest",behavior:REDUCED?"auto":"smooth"});
@@ -1207,16 +1247,17 @@ function formError(msg,field){
   el.setAttribute("aria-invalid","true");el.focus();
 }
 /* Envía operaciones a la función del servidor (admin-users), de 100 en 100. */
-async function runOps(ops){
+async function runOps(ops,onProgress){
   const results=[];
-  for(let i=0;i<ops.length;i+=100){
-    const {data,error}=await sb.functions.invoke(CONFIG.adminFunction,{body:{ops:ops.slice(i,i+100)}});
+  for(let i=0;i<ops.length;i+=50){
+    const {data,error}=await sb.functions.invoke(CONFIG.adminFunction,{body:{ops:ops.slice(i,i+50)}});
     if(error){
       let m="No se pudo conectar con el servidor. Comprueba que la función de administración esté publicada.";
       if(error.context&&typeof error.context.json==="function"){try{const j=await error.context.json();if(j&&j.error)m=j.error}catch(e){}}
       throw new Error(m);
     }
     results.push(...(data&&data.results||[]));
+    if(onProgress)onProgress(Math.min(i+50,ops.length),ops.length);
   }
   return results;
 }
@@ -1269,12 +1310,12 @@ async function applyPlan(){
   adm.busy=true;renderPlan();
   let report;
   try{
-    const results=await runOps(p.ops.map(o=>o.op));
+    const results=await runOps(p.ops.map(o=>o.op),(d,t)=>{adm.prog=`${d} de ${t}`;renderPlan()});
     const fails=results.filter(r=>!r.ok),warns=results.filter(r=>r.ok&&r.warn);
     report={ok:results.length-fails.length,fails,warns,creds:p.creds,credsKind:p.credsKind};
   }catch(e){report={ok:0,fails:[{id:"",error:e.message}],warns:[]}}
   try{await loadAdminData()}catch(e){}
-  adm.busy=false;adm.plan=null;adm.report=report;
+  adm.busy=false;adm.prog="";adm.plan=null;adm.report=report;
   if(adm.editing&&!pick(USERS,adm.editing)){adm.form=false;adm.editing=null}
   if(report.ok)toast(`${report.ok} cambio${report.ok===1?"":"s"} aplicado${report.ok===1?"":"s"}`,1);
   refreshAdmin();
@@ -1291,9 +1332,12 @@ function bindAdmin(){
   };
   $("#aplan").onclick=e=>{const b=e.target.closest("button");if(!b)return;
     if(b.id==="acreds")downloadCreds(adm.report||adm.plan);else if(b.id==="acancel"){adm.plan=null;renderPlan()}else if(b.id==="aclose"){adm.report=null;renderPlan()}else if(b.id==="aapply")applyPlan()};
-  $("#aseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;adm.role=b.dataset.r;renderSeg();renderTable()};
-  $("#aq").oninput=e=>{adm.q=e.target.value;renderTable()};
+  $("#aseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;adm.role=b.dataset.r;adm.limit=50;renderSeg();renderTable()};
+  $("#aq").oninput=e=>{adm.q=e.target.value;adm.limit=50;renderTable()};
+  $("#dscope").onchange=renderDel;$("#dconf").oninput=renderDel;$("#dgo").onclick=deleteBulk;
+  $("#adv").addEventListener("toggle",()=>{if($("#adv").open)renderDel()});
   $("#utable").onclick=e=>{const b=e.target.closest("button");if(!b)return;
+    if(b.id==="amore"){adm.limit+=100;renderTable();return}
     if(b.dataset.edit){openForm(b.dataset.edit);return}
     if(b.dataset.del){
       if(b.dataset.armed){clearTimeout(adm.t);deleteUser(b.dataset.del);return}

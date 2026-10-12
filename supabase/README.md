@@ -79,6 +79,19 @@ Hay dos plantillas (botones **Alumnos** y **Profesores** en el panel). Una fila 
 - **Descargar credenciales:** en la vista previa (y en el informe después de aplicar) hay un botón que baja un Excel con el usuario y la contraseña inicial de cada alumno y de su apoderado (o de cada profesor), ordenado por curso, para entregárselos a las familias. Se arma con el mismo archivo que subes, así que puedes volver a subirlo cuando quieras para sacar la lista otra vez. Contiene contraseñas: guárdalo con cuidado y bórralo cuando termines. Si le cambiaste a alguien la contraseña desde el panel, la de la lista ya no le sirve.
 - **Exportar usuarios** descarga la lista actual (sin contraseñas) en un formato genérico que también se puede volver a subir.
 
+## Eliminar usuarios en bloque (opciones avanzadas)
+Al final del panel de control hay un desplegable **Opciones avanzadas** (cerrado por defecto) con «Eliminar usuarios en bloque». Eliges qué borrar (todos, solo alumnos y apoderados, o solo profesores), ves cuántos usuarios se eliminarán, escribes **ELIMINAR** para confirmar y se borran junto con todas sus notas y anotaciones. La cuenta de administrador nunca se toca. Con cientos de usuarios puede tardar unos minutos: muestra el avance y no hay que cerrar la página.
+
+Alternativa instantánea desde el **SQL Editor** de Supabase (borra a todos menos al administrador, con sus notas y anotaciones):
+
+```sql
+delete from auth.users
+where id in (select id from public.profiles where rol <> 'adm');
+```
+
+## Cargas grandes
+La carga se envía de 50 en 50 y muestra el avance («Aplicando… 150 de 600»). Subir unos 300 alumnos con sus apoderados (unas 600 cuentas) puede tardar unos minutos. La tabla del panel muestra 50 usuarios por vez, con «Mostrar más» y búsqueda.
+
 ## Planilla de notas (profesores)
 **Notas** abre una planilla del curso: eliges curso y asignatura, escribes la nota de cada alumno en la columna «Nueva» y guardas una sola vez. Enter baja a la fila siguiente, se puede pegar una columna copiada desde Excel y «Agregar columna» permite ingresar varias notas a la vez. Las notas ya guardadas se pueden corregir o borrar (con confirmación) si las registró el mismo profesor.
 
