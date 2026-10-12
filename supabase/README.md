@@ -92,6 +92,11 @@ where id in (select id from public.profiles where rol <> 'adm');
 ## Cargas grandes
 La carga se envía de 50 en 50 y muestra el avance («Aplicando… 150 de 600»). Subir unos 300 alumnos con sus apoderados (unas 600 cuentas) puede tardar unos minutos. La tabla del panel muestra 50 usuarios por vez, con «Mostrar más» y búsqueda.
 
+## Noticias
+Los profesores publican noticias desde **Noticias** (título y mensaje). Las ven los profesores y los estudiantes: en **Inicio** (las 3 últimas) y en **Noticias** (las 50 últimas). Cada profesor tiene **Editar** y **Eliminar** (con confirmación) solo en **sus** noticias; las de otros profesores solo se leen. Una noticia editada se marca como «editada». El autor y la fecha los fija el servidor y no se pueden falsificar.
+
+**Si ya tenías la base creada:** vuelve a ejecutar [`schema.sql`](./schema.sql) completo en el SQL Editor (es seguro repetirlo) para crear la tabla `noticias`. Hasta entonces la intranet funciona igual, pero sin noticias, y al intentar publicar avisa que falta actualizar Supabase.
+
 ## Planilla de notas (profesores)
 **Notas** abre una planilla del curso: eliges curso y asignatura, escribes la nota de cada alumno en la columna «Nueva» y guardas una sola vez. Enter baja a la fila siguiente, se puede pegar una columna copiada desde Excel y «Agregar columna» permite ingresar varias notas a la vez. Las notas ya guardadas se pueden corregir o borrar (con confirmación) si las registró el mismo profesor.
 
