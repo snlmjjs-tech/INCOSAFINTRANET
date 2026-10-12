@@ -93,6 +93,9 @@ alter table public.anotaciones          enable row level security;
 revoke all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones from anon, authenticated;
 grant select on public.profiles, public.apoderado_estudiante to authenticated;
 grant select, insert, update, delete on public.notas, public.anotaciones to authenticated;
+-- La función admin-users usa service_role: omite las políticas RLS, pero necesita permisos de tabla
+-- (como 'Automatically expose new tables' está desactivado, hay que concederlos aquí).
+grant all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones to service_role;
 
 -- profiles: cada quien ve el suyo; el admin ve todos; el profesor ve estudiantes; el apoderado ve a sus hijos.
 -- Crear, cambiar o borrar usuarios solo ocurre en la función del servidor (admin-users).
