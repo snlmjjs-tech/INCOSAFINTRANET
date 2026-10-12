@@ -46,6 +46,17 @@ create table if not exists public.anotaciones (
 );
 create index if not exists anotaciones_est_idx on public.anotaciones (estudiante_id, created_at);
 
+create table if not exists public.noticias (
+  id           uuid primary key default gen_random_uuid(),
+  titulo       text not null check (char_length(titulo) between 3 and 120),
+  mensaje      text not null check (char_length(mensaje) between 3 and 2000),
+  autor_id     uuid references public.profiles(id) on delete set null,
+  autor_nombre text not null default '',
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists noticias_fecha_idx on public.noticias (created_at desc);
+
 -- ---------- Funciones de apoyo (security definer: evitan recursión en las políticas) ----------
 create or replace function public.mi_rol() returns text
 language sql stable security definer set search_path = '' as $$
@@ -80,6 +91,33 @@ drop trigger if exists anotaciones_fijar_profesor on public.anotaciones;
 create trigger anotaciones_fijar_profesor before insert on public.anotaciones
   for each row execute function public.fijar_profesor();
 
+-- Noticias: el servidor fija el autor al publicar y no deja cambiar autor ni fecha de creación al editar
+create or replace function public.fijar_autor() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  new.autor_id := (select auth.uid());
+  new.autor_nombre := coalesce((select nombre from public.profiles where id = (select auth.uid())), '');
+  return new;
+end $$;
+
+create or replace function public.noticia_editada() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  new.autor_id := old.autor_id;
+  new.autor_nombre := old.autor_nombre;
+  new.created_at := old.created_at;
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists noticias_fijar_autor on public.noticias;
+create trigger noticias_fijar_autor before insert on public.noticias
+  for each row execute function public.fijar_autor();
+drop trigger if exists noticias_editada on public.noticias;
+create trigger noticias_editada before update on public.noticias
+  for each row execute function public.noticia_editada();
+
+revoke all on function public.fijar_autor(), public.noticia_editada() from public, anon;
 revoke all on function public.mi_rol(), public.es_apoderado_de(uuid), public.es_estudiante(uuid), public.fijar_profesor() from public, anon;
 grant execute on function public.mi_rol(), public.es_apoderado_de(uuid), public.es_estudiante(uuid) to authenticated;
 
@@ -88,14 +126,15 @@ alter table public.profiles             enable row level security;
 alter table public.apoderado_estudiante enable row level security;
 alter table public.notas                enable row level security;
 alter table public.anotaciones          enable row level security;
+alter table public.noticias             enable row level security;
 
 -- Permisos de tabla: solo lectura/escritura para usuarios con sesión; el resto lo filtran las políticas
-revoke all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones from anon, authenticated;
+revoke all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones, public.noticias from anon, authenticated;
 grant select on public.profiles, public.apoderado_estudiante to authenticated;
-grant select, insert, update, delete on public.notas, public.anotaciones to authenticated;
+grant select, insert, update, delete on public.notas, public.anotaciones, public.noticias to authenticated;
 -- La función admin-users usa service_role: omite las políticas RLS, pero necesita permisos de tabla
 -- (como 'Automatically expose new tables' está desactivado, hay que concederlos aquí).
-grant all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones to service_role;
+grant all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones, public.noticias to service_role;
 
 -- profiles: cada quien ve el suyo; el admin ve todos; el profesor ve estudiantes; el apoderado ve a sus hijos.
 -- Crear, cambiar o borrar usuarios solo ocurre en la función del servidor (admin-users).
@@ -149,4 +188,23 @@ create policy anot_update on public.anotaciones for update to authenticated
 drop policy if exists anot_delete on public.anotaciones;
 create policy anot_delete on public.anotaciones for delete to authenticated using (
   public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid()))
+);
+
+-- noticias: todas las personas con perfil las leen; profesores y admin publican;
+-- cada profesor edita y elimina solo las suyas (el admin, todas)
+drop policy if exists noticias_select on public.noticias;
+create policy noticias_select on public.noticias for select to authenticated using (
+  public.mi_rol() is not null
+);
+drop policy if exists noticias_insert on public.noticias;
+create policy noticias_insert on public.noticias for insert to authenticated with check (
+  public.mi_rol() in ('adm','prof')
+);
+drop policy if exists noticias_update on public.noticias;
+create policy noticias_update on public.noticias for update to authenticated
+  using (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and autor_id = (select auth.uid())))
+  with check (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and autor_id = (select auth.uid())));
+drop policy if exists noticias_delete on public.noticias;
+create policy noticias_delete on public.noticias for delete to authenticated using (
+  public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and autor_id = (select auth.uid()))
 );
