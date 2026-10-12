@@ -76,6 +76,7 @@ Hay dos plantillas (botones **Alumnos** y **Profesores** en el panel). Una fila 
 - **Eliminar** a un alumno borra también sus notas y anotaciones, y a su apoderado si no tiene otros hijos.
 - El curso se ordena solo: `1a`, `1 A` y `1°A` son el mismo curso.
 - Antes de aplicar ves un resumen con los usuarios que se crearán y los errores por fila.
+- **Descargar credenciales:** en la vista previa (y en el informe después de aplicar) hay un botón que baja un Excel con el usuario y la contraseña inicial de cada alumno y de su apoderado (o de cada profesor), ordenado por curso, para entregárselos a las familias. Se arma con el mismo archivo que subes, así que puedes volver a subirlo cuando quieras para sacar la lista otra vez. Contiene contraseñas: guárdalo con cuidado y bórralo cuando termines. Si le cambiaste a alguien la contraseña desde el panel, la de la lista ya no le sirve.
 - **Exportar usuarios** descarga la lista actual (sin contraseñas) en un formato genérico que también se puede volver a subir.
 
 ## Planilla de notas (profesores)

@@ -233,6 +233,8 @@ main:focus{outline:none}
 .hint{font-size:13.5px;color:var(--muted);margin:10px 0}
 .hint.warn{color:var(--bad);font-weight:600}
 .plan{border-top:1px solid var(--line);margin-top:20px;padding-top:18px}
+.credbox{margin:14px 0}
+.credbox .hint{margin:8px 0 0;max-width:68ch}
 .sum{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .sum span{padding:5px 12px;border-radius:8px;font-weight:700;font-size:13.5px;background:var(--soft)}
 .sum .a{background:var(--ok-bg);color:var(--ok)}
@@ -969,7 +971,7 @@ function planTemplate(kind,head,body,file){
   if(kind==="est")body.forEach(({row})=>{
     const a=strip(cell(row,ix.act));if(a==="eliminar"||a==="borrar"||a==="quitar"||a==="del")return;
     const rutA=cell(row,ix.rutA),u=usuarioDesde("est",cell(row,num),"N°");
-    if(rutA!==""&&!u.error)(grupos[keyRut(rutA)]??={n:u.n,hijos:[]}).hijos.push(u.id);
+    if(rutA!==""&&!u.error)(grupos[keyRut(rutA)]??={n:u.n,hijos:[],name:cell(row,ix.nameA)}).hijos.push(u.id);
   });
   const rows=[],apoRows=[]; // los apoderados se crean después de todos los alumnos (pueden vincular a varios)
   body.forEach(({row,n})=>{
@@ -985,14 +987,29 @@ function planTemplate(kind,head,body,file){
     const rutA=cell(row,ix.rutA),nameA=cell(row,ix.nameA);
     if(rutA===""&&nameA==="")return; // sin datos de apoderado: solo se crea el alumno
     const g=grupos[keyRut(rutA)];
+    if(g){const ca=claveDesdeRut(rutA);if(!ca.error)main.ap={id:String(PREFIX.apo+g.n),pw:ca.pw,name:g.name||nameA,g}}
     if(g&&g.hijos[0]!==u.id)return;  // el apoderado ya lo crea el primer hermano de la lista
-    const fail=error=>apoRows.push({n,error,label:"Apoderado",parent:main});
+    const fail=error=>{const e={n,error,label:"Apoderado",parent:main};if(g)g.entry=e;apoRows.push(e)};
     if(rutA==="")return fail("Falta el RUT del apoderado (se usa para su contraseña).");
     if(nameA==="")return fail("Falta el nombre del apoderado.");
     const c=claveDesdeRut(rutA);if(c.error)return fail(c.error);
-    apoRows.push({n,label:"Apoderado",parent:main,r:{act:act==="reset"?"reset":"",role:"apo",id:String(PREFIX.apo+g.n),pw:c.pw,pwAuto:true,name:nameA,curso:"",hijos:g.hijos.join(","),hijosMerge:true}});
+    const entry={n,label:"Apoderado",parent:main,r:{act:act==="reset"?"reset":"",role:"apo",id:String(PREFIX.apo+g.n),pw:c.pw,pwAuto:true,name:nameA,curso:"",hijos:g.hijos.join(","),hijosMerge:true}};
+    g.entry=entry;apoRows.push(entry);
   });
-  return buildPlan([...rows,...apoRows],file);
+  const plan=buildPlan([...rows,...apoRows],file);
+  // lista de credenciales (usuario + contraseña inicial) para entregar a las familias y a los profesores
+  const creds=[];
+  rows.forEach(m=>{
+    if(!m.r||m.failed||m.r.act==="del")return;
+    const nombre=m.r.name||(pick(USERS,m.r.id)||{}).name||"";
+    if(kind==="est"){
+      const ap=m.ap&&!(m.ap.g.entry&&m.ap.g.entry.failed)?m.ap:null;
+      if(m.r.pw||ap)creds.push([m.r.curso||(pick(USERS,m.r.id)||{}).curso||"",nombre,m.r.id,m.r.pw,ap?ap.name:"",ap?ap.id:"",ap?ap.pw:""]);
+    }else if(m.r.pw)creds.push([nombre,m.r.curso||(pick(USERS,m.r.id)||{}).curso||"",m.r.id,m.r.pw]);
+  });
+  creds.sort((a,b)=>kind==="est"?a[0].localeCompare(b[0],"es",{numeric:true})||a[1].localeCompare(b[1],"es"):a[0].localeCompare(b[0],"es"));
+  plan.creds=creds;plan.credsKind=kind;
+  return plan;
 }
 function planFromAoa(aoa,file){
   const head=(aoa[0]||[]).map(strip),has=re=>head.some(h=>re.test(h));
@@ -1077,6 +1094,12 @@ function downloadTemplate(kind){
   const t=TEMPLATES[kind];if(!t)return;
   saveSheet(t.file,[t.cols],[["Cómo usar esta plantilla"],[""],...t.notas.map((x,i)=>[`${i+1}. ${x}`]),[""],...ACCIONES.map(x=>[x]),[""],["Ejemplos (no se cargan, son solo una guía)"],t.cols,...t.ejemplos]);
 }
+const CRED_COLS={est:["Curso","Alumno","Usuario alumno","Contraseña alumno","Apoderado","Usuario apoderado","Contraseña apoderado"],prof:["Profesor","Cargo","Usuario","Contraseña"]};
+function downloadCreds(src){
+  if(!src||!src.creds||!src.creds.length)return;
+  saveSheet(`credenciales-${src.credsKind==="est"?"alumnos-y-apoderados":"profesores"}-${new Date().toISOString().slice(0,10)}`,[CRED_COLS[src.credsKind],...src.creds]);
+  toast("Lista descargada",1);
+}
 function exportUsers(){
   const order={est:0,prof:1,apo:2};
   const rows=Object.entries(USERS).filter(([,u])=>u.role!=="adm").sort((a,b)=>order[a[1].role]-order[b[1].role]||a[1].name.localeCompare(b[1].name,"es"))
@@ -1134,6 +1157,7 @@ function renderPlan(){
   if(r){
     box.innerHTML=`<div class="plan"><div class="sum">${r.ok?`<span class="a">${r.ok} aplicado${r.ok===1?"":"s"}</span>`:""}${r.fails.length?`<span class="e">${r.fails.length} con error${r.fails.length===1?"":"es"}</span>`:""}</div>
       ${r.fails.length||r.warns.length?`<ul class="issues">${r.fails.map(f=>`<li class="e">${f.id?`<b>${esc(f.id)}:</b> `:""}${esc(f.error)}</li>`).join("")}${r.warns.map(w=>`<li class="w"><b>${esc(w.id)}:</b> ${esc(w.warn)}</li>`).join("")}</ul>`:""}
+      ${(r.creds&&r.creds.length)?`<div class="credbox"><button type="button" class="btn ghost sm" id="acreds">${ICON.down}Descargar credenciales</button><p class="hint">Excel con el usuario y la contraseña inicial de cada persona de este archivo, para entregarlas. Contiene contraseñas: guárdalo con cuidado y bórralo cuando termines. Si le cambiaste a alguien la contraseña desde el panel, la de la lista ya no le sirve.</p></div>`:""}
       <div class="actions"><button type="button" class="btn ghost" id="aclose">Cerrar</button></div></div>`;
     return;
   }
@@ -1146,6 +1170,7 @@ function renderPlan(){
     ${c.del?`<p class="hint warn">Se eliminarán ${c.del} usuario${c.del===1?"":"s"} y sus notas. No se puede deshacer.</p>`:""}
     ${p.issues.length?`<ul class="issues">${p.issues.map(i=>`<li class="${i.t}">${i.n?`<b>Fila ${i.n}:</b> `:""}${esc(i.m)}</li>`).join("")}</ul>`:""}
     ${c.err&&n?'<p class="hint">Las filas con error no se aplican; el resto sí.</p>':""}
+    ${(p.creds&&p.creds.length)?`<div class="credbox"><button type="button" class="btn ghost sm" id="acreds">${ICON.down}Descargar credenciales</button><p class="hint">Excel con el usuario y la contraseña inicial de cada persona de este archivo, para entregarlas. Contiene contraseñas: guárdalo con cuidado y bórralo cuando termines. Si le cambiaste a alguien la contraseña desde el panel, la de la lista ya no le sirve.</p></div>`:""}
     <div class="actions"><button type="button" class="btn gold" id="aapply" ${n&&!adm.busy?"":"disabled"}>${adm.busy?"Aplicando…":`Aplicar ${n} cambio${n===1?"":"s"}`}</button><button type="button" class="btn ghost" id="acancel" ${adm.busy?"disabled":""}>Cancelar</button></div></div>`;
 }
 function renderForm(){
@@ -1246,7 +1271,7 @@ async function applyPlan(){
   try{
     const results=await runOps(p.ops.map(o=>o.op));
     const fails=results.filter(r=>!r.ok),warns=results.filter(r=>r.ok&&r.warn);
-    report={ok:results.length-fails.length,fails,warns};
+    report={ok:results.length-fails.length,fails,warns,creds:p.creds,credsKind:p.credsKind};
   }catch(e){report={ok:0,fails:[{id:"",error:e.message}],warns:[]}}
   try{await loadAdminData()}catch(e){}
   adm.busy=false;adm.plan=null;adm.report=report;
@@ -1265,7 +1290,7 @@ function bindAdmin(){
     renderPlan();
   };
   $("#aplan").onclick=e=>{const b=e.target.closest("button");if(!b)return;
-    if(b.id==="acancel"){adm.plan=null;renderPlan()}else if(b.id==="aclose"){adm.report=null;renderPlan()}else if(b.id==="aapply")applyPlan()};
+    if(b.id==="acreds")downloadCreds(adm.report||adm.plan);else if(b.id==="acancel"){adm.plan=null;renderPlan()}else if(b.id==="aclose"){adm.report=null;renderPlan()}else if(b.id==="aapply")applyPlan()};
   $("#aseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;adm.role=b.dataset.r;renderSeg();renderTable()};
   $("#aq").oninput=e=>{adm.q=e.target.value;renderTable()};
   $("#utable").onclick=e=>{const b=e.target.closest("button");if(!b)return;
