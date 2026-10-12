@@ -61,11 +61,25 @@ La dirección quedará como `https://<usuario>.github.io/INCOSAFINTRANET/`.
 3. Entra como profesor, ingresa una nota y una anotación; entra como estudiante y como apoderado para comprobar qué ve cada uno.
 
 ## Cómo cargar usuarios con Excel
-Columnas: `Acción · Rol · Usuario · Contraseña · Nombre · Curso · Hijos`.
-- **Acción**: `agregar`, `modificar` o `eliminar`. Vacía = agrega, o actualiza si ya existe.
-- **Contraseña**: 6 a 64 caracteres. Al modificar, vacía = conserva la actual. Las contraseñas no se pueden leer ni exportar.
-- **Hijos** (solo apoderados): usuarios de sus estudiantes separados por coma, por ejemplo `1003, 1004`.
+Hay tres plantillas (botones **Alumnos**, **Apoderados** y **Profesores** en el panel). Una fila por persona:
+
+| Plantilla | Columnas | Usuario | Contraseña inicial |
+|---|---|---|---|
+| Alumnos | Acción · N° alumno · RUT · Nombre · Curso | 1000 + N° (234 → `1234`) | 6 primeros dígitos del RUT del alumno |
+| Profesores | Acción · N° profesor · RUT · Nombre · Cargo | 2000 + N° (1 → `2001`) | 6 primeros dígitos de su RUT |
+| Apoderados | Acción · N° estudiante (y 2, 3 si hay hermanos) · RUT · Nombre | 3000 + N° del estudiante (234 → `3234`) | 6 primeros dígitos del RUT del apoderado |
+
+- El RUT solo se usa para calcular la contraseña inicial; **no se guarda**. Acepta `12.345.678-9`, `12345678-9` o `12345678`.
+- **Acción**: vacía = crea, o actualiza nombre y curso si ya existe (**la contraseña no cambia**). `modificar`, `eliminar` y `restablecer` (vuelve la contraseña a los 6 primeros dígitos del RUT).
+- El curso se ordena solo: `1a`, `1 A` y `1°A` son el mismo curso.
+- Carga primero a los alumnos y después a los apoderados. Si un apoderado se carga antes, vuelve a subir su fila para vincularlo.
+- Si dos apoderados comparten estudiante (mamá y papá), el segundo se crea a mano con **Nuevo usuario** y otro nombre de usuario.
 - Eliminar a un estudiante borra también sus notas y anotaciones.
+- Antes de aplicar ves un resumen con los usuarios que se crearán y los errores por fila.
+- **Exportar usuarios** descarga la lista actual (sin contraseñas) en un formato genérico que también se puede volver a subir.
+
+## Planilla de notas (profesores)
+**Notas** abre una planilla del curso: eliges curso y asignatura, escribes la nota de cada alumno en la columna «Nueva» y guardas una sola vez. Enter baja a la fila siguiente, se puede pegar una columna copiada desde Excel y «Agregar columna» permite ingresar varias notas a la vez. Las notas ya guardadas se pueden corregir o borrar (con confirmación) si las registró el mismo profesor.
 
 ## Notas
 - El plan gratuito de Supabase pausa el proyecto tras una semana sin uso; se reactiva desde el panel.
