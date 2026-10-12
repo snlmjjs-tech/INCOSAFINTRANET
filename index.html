@@ -82,6 +82,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);bo
 .formcard h2{font-size:28px;font-weight:800}
 .formcard .sub{margin:6px 0 4px;color:var(--muted);font-size:15px}
 
+/* ---------- cambio obligatorio de contraseña ---------- */
+#force{min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg)}
+#force .formcard{margin:0}
+
 /* ---------- app ---------- */
 #app{min-height:100vh}
 .side.surface{position:fixed;top:0;bottom:0;left:0;width:var(--side);display:flex;flex-direction:column;padding:22px 14px;z-index:5;
@@ -362,6 +366,22 @@ main:focus{outline:none}
   </div>
 </section>
 
+<!-- CAMBIO OBLIGATORIO DE CONTRASEÑA -->
+<section id="force" class="hidden" aria-labelledby="force-h">
+  <form class="formcard surface" id="fform" novalidate>
+    <h2 id="force-h">Crea tu contraseña</h2>
+    <p class="sub">Por seguridad, antes de continuar debes elegir una contraseña nueva. La contraseña inicial dejará de funcionar.</p>
+    <label for="np1">Contraseña nueva</label>
+    <input id="np1" type="password" autocomplete="new-password" maxlength="64">
+    <label for="np2">Repite la contraseña</label>
+    <input id="np2" type="password" autocomplete="new-password" maxlength="64">
+    <p class="hint">Mínimo 8 caracteres. Mezcla letras y números para que sea más segura.</p>
+    <div id="ferr2" class="err hidden" role="alert"></div>
+    <button class="btn full" id="fsave" type="submit">Guardar y continuar</button>
+    <button class="btn ghost full" id="fout" type="button" style="margin-top:10px">Cerrar sesión</button>
+  </form>
+</section>
+
 <!-- APP -->
 <div id="app" class="hidden">
   <aside class="side surface">
@@ -464,11 +484,12 @@ let me=null, view="inicio";
 
 /* ===== LOGIN ===== */
 const setLoginError=m=>{const e=$("#lerr");e.textContent=m;e.classList.remove("hidden")};
+let loginPw="",forceUser=null;
 async function doLogin(){
   const id=norm($("#uid").value).toLowerCase(),pw=$("#pw").value,btn=$("#go");
   if(!sb)return setLoginError("La intranet aún no está conectada a la base de datos. Avisa a la administración.");
   if(!id||!pw){["uid","pw"].forEach(i=>{if(!$("#"+i).value)$("#"+i).setAttribute("aria-invalid","true")});$(!id?"#uid":"#pw").focus();return setLoginError("Escribe tu ID y tu contraseña.")}
-  btn.disabled=true;
+  btn.disabled=true;loginPw=pw;
   try{
     const {data,error}=await sb.auth.signInWithPassword({email:`${id}@${CONFIG.emailDomain}`,password:pw});
     if(error){
@@ -483,6 +504,8 @@ async function doLogin(){
 async function enter(user){
   const {data:p,error}=await sb.from("profiles").select("*").eq("id",user.id).maybeSingle();
   if(error||!p){await sb.auth.signOut();return setLoginError(error?"No se pudo cargar tu perfil. Inténtalo de nuevo.":"Tu cuenta aún no tiene un perfil asignado. Consulta con la administración.")}
+  if(p.cambiar_clave===true)return showForce(user,p);
+  loginPw="";
   me={id:p.id,usuario:p.usuario,role:p.rol,name:p.nombre,curso:p.curso};
   view=me.role==="apo"?"notas":me.role==="adm"?"admin":"inicio";
   hijo="";prof.curso="";prof.est="";sheetReset();sheet.curso="";Object.assign(adm,{q:"",role:"all",form:false,editing:null,plan:null,report:null,busy:false});
@@ -492,10 +515,44 @@ async function enter(user){
   $("#av").textContent=me.name.replace("Prof. ","").split(" ").slice(0,2).map(x=>x[0]).join("");
   buildNav();await render();window.scrollTo(0,0);
 }
+/* Cambio obligatorio de la contraseña inicial (la base de datos no entrega datos hasta que se cambie) */
+function showForce(user,p){
+  forceUser=user;me=null;
+  $("#login").classList.add("hidden");$("#app").classList.add("hidden");$("#force").classList.remove("hidden");
+  ["np1","np2"].forEach(i=>{$("#"+i).value="";$("#"+i).removeAttribute("aria-invalid")});
+  $("#ferr2").classList.add("hidden");$("#np1").focus();
+  forceUser.usuario=p.usuario;
+}
+function forceError(msg,field){const e=$("#ferr2");e.textContent=msg;e.classList.remove("hidden");if(field){field.setAttribute("aria-invalid","true");field.focus()}}
+$("#fform").addEventListener("input",()=>{$("#ferr2").classList.add("hidden");["np1","np2"].forEach(i=>$("#"+i).removeAttribute("aria-invalid"))});
+$("#fform").onsubmit=async ev=>{
+  ev.preventDefault();
+  const a=$("#np1").value,b=$("#np2").value,btn=$("#fsave");
+  if(a.length<8)return forceError("La contraseña debe tener al menos 8 caracteres.",$("#np1"));
+  if(/^(.)\1+$/.test(a))return forceError("Elige una contraseña menos obvia: no repitas siempre el mismo carácter.",$("#np1"));
+  if(a.toLowerCase()===String(forceUser.usuario||"").toLowerCase())return forceError("La contraseña no puede ser igual a tu usuario.",$("#np1"));
+  if(loginPw&&a===loginPw)return forceError("La contraseña nueva debe ser distinta a la inicial.",$("#np1"));
+  if(a!==b)return forceError("Las contraseñas no coinciden.",$("#np2"));
+  btn.disabled=true;
+  try{
+    const {error}=await sb.auth.updateUser({password:a});
+    if(error){
+      if(/different|same/i.test(error.message))return forceError("La contraseña nueva debe ser distinta a la actual.",$("#np1"));
+      if(/weak|short|least|characters/i.test(error.message))return forceError("Esa contraseña es muy débil. Usa al menos 8 caracteres y mezcla letras y números.",$("#np1"));
+      return forceError("No se pudo cambiar la contraseña. Inténtalo de nuevo.");
+    }
+    const r=await sb.rpc("clave_cambiada");
+    if(r.error){$("#force").classList.add("hidden");return logout("Tu contraseña se cambió, pero no se pudo terminar el proceso. Ingresa con la contraseña nueva.")}
+    loginPw="";$("#force").classList.add("hidden");
+    await enter(forceUser);
+  }catch(e){forceError("No se pudo conectar. Revisa tu conexión e inténtalo de nuevo.")}
+  finally{btn.disabled=false}
+};
+$("#fout").onclick=()=>logout();
 $("#go").onclick=doLogin;
 ["uid","pw"].forEach(i=>{const el=$("#"+i);el.addEventListener("keydown",e=>{if(e.key==="Enter")doLogin()});el.addEventListener("input",()=>{["uid","pw"].forEach(k=>$("#"+k).removeAttribute("aria-invalid"));$("#lerr").classList.add("hidden")})});
 async function logout(msg){
-  me=null;renderSeq++;USERS={};sheetReset();DB.notas=[];DB.anots=[];DB.hijos=[];DB.ests=[];
+  me=null;loginPw="";forceUser=null;renderSeq++;USERS={};sheetReset();$("#force").classList.add("hidden");DB.notas=[];DB.anots=[];DB.hijos=[];DB.ests=[];
   try{if(sb)await sb.auth.signOut()}catch(e){}
   $("#main").innerHTML="";["uid","pw"].forEach(i=>$("#"+i).removeAttribute("aria-invalid"));
   $("#app").classList.add("hidden");$("#login").classList.remove("hidden");$("#pw").value="";
@@ -1203,6 +1260,12 @@ async function loadAdminData(){
   ps.forEach(p=>{USERS[p.usuario]={uid:p.id,role:p.rol,name:p.nombre,curso:p.curso,...(p.rol==="apo"?{hijos:[]}:{})}});
   vs.forEach(v=>{const a=byId[v.apoderado_id],e=byId[v.estudiante_id];if(a&&e&&USERS[a.usuario]&&USERS[a.usuario].hijos)USERS[a.usuario].hijos.push(e.usuario)});
 }
+/* Obliga a cambiar la contraseña en el próximo ingreso (tras restablecerla o fijar una nueva) */
+async function forzarClaves(ids){
+  if(!ids.length)return;
+  try{const {error}=await sb.rpc("forzar_cambio_clave",{p_usuarios:ids});if(error)throw error}
+  catch(e){toast("La contraseña cambió, pero no se pudo exigir el cambio en el próximo ingreso.")}
+}
 async function submitForm(ev){
   ev.preventDefault();
   const e=adm.editing,get=i=>norm($("#"+i).value),u=e?pick(USERS,e):null,btn=$("#uform button[type=submit]");
@@ -1222,6 +1285,7 @@ async function submitForm(ev){
   try{
     const [r]=await runOps([res.op]);
     if(!r.ok){formError(r.error,"id");return}
+    if(e&&$("#f-pw").value)await forzarClaves([e]);
     await loadAdminData();adm.plan=null;adm.report=null;
     toast(r.warn?r.warn:(e?"Usuario actualizado":"Usuario agregado"),!r.warn);
     closeForm();refreshAdmin();
@@ -1245,7 +1309,8 @@ async function applyPlan(){
   let report;
   try{
     const results=await runOps(p.ops.map(o=>o.op));
-    const fails=results.filter(r=>!r.ok),warns=results.filter(r=>r.ok&&r.warn);
+    const fails=results.filter(r=>!r.ok),warns=results.filter(r=>r.ok&&r.warn),okIds=new Set(results.filter(r=>r.ok).map(r=>r.id));
+    await forzarClaves(p.ops.filter(o=>o.op.type==="mod"&&o.op.pw&&okIds.has(o.id)).map(o=>o.id));
     report={ok:results.length-fails.length,fails,warns};
   }catch(e){report={ok:0,fails:[{id:"",error:e.message}],warns:[]}}
   try{await loadAdminData()}catch(e){}

@@ -68,7 +68,7 @@ Hay dos plantillas (botones **Alumnos** y **Profesores** en el panel). Una fila 
 | Alumnos | Acción · N° alumno · RUT alumno · Nombre alumno · Curso · RUT apoderado · Nombre apoderado | Alumno: 1000 + N° (234 → `1234`). Apoderado: 3000 + N° (→ `3234`) | 6 primeros dígitos del RUT de cada uno |
 | Profesores | Acción · N° profesor · RUT · Nombre · Cargo | 2000 + N° (1 → `2001`) | 6 primeros dígitos de su RUT |
 
-- El RUT solo se usa para calcular la contraseña inicial; **no se guarda**. Acepta `12.345.678-9`, `12345678-9` o `12345678`.
+- El RUT solo se usa para calcular la contraseña inicial (que cada persona deberá cambiar al entrar); **no se guarda**. Acepta `12.345.678-9`, `12345678-9` o `12345678`.
 - Si no escribes datos de apoderado, se crea solo el alumno. Si escribes uno de los dos datos del apoderado (RUT o nombre) y falta el otro, el alumno se crea y se avisa del error del apoderado.
 - **Hermanos:** si dos alumnos tienen el mismo RUT de apoderado dentro del archivo, comparten una sola cuenta de apoderado (su usuario se calcula con el primero de la lista). Si los hermanos se cargan en archivos distintos, quedan con cuentas separadas.
 - Si el segundo apoderado de un alumno (mamá y papá) también debe entrar, se crea a mano con **Nuevo usuario** y otro nombre de usuario.
@@ -80,6 +80,19 @@ Hay dos plantillas (botones **Alumnos** y **Profesores** en el panel). Una fila 
 
 ## Planilla de notas (profesores)
 **Notas** abre una planilla del curso: eliges curso y asignatura, escribes la nota de cada alumno en la columna «Nueva» y guardas una sola vez. Enter baja a la fila siguiente, se puede pegar una columna copiada desde Excel y «Agregar columna» permite ingresar varias notas a la vez. Las notas ya guardadas se pueden corregir o borrar (con confirmación) si las registró el mismo profesor.
+
+## Cambio obligatorio de la contraseña inicial
+La contraseña inicial (6 primeros dígitos del RUT) es predecible, así que **cada persona debe cambiarla en su primer ingreso**:
+- Al entrar por primera vez ve la pantalla «Crea tu contraseña» (mínimo 8 caracteres) y no puede usar la intranet hasta cambiarla.
+- No es solo un aviso en pantalla: mientras la contraseña esté pendiente, **la base de datos no entrega notas ni anotaciones**, ni siquiera por la API.
+- Al **restablecer** una contraseña desde el panel (acción `restablecer` o «Nueva contraseña» al editar), se vuelve a exigir el cambio en el siguiente ingreso.
+- Los usuarios nuevos nacen con el cambio pendiente. El administrador que ya existía queda exento; uno nuevo creado con el comando del paso 3 también tendrá que cambiarla la primera vez.
+- Límite: quien conozca el RUT de alguien y entre **antes** que esa persona puede quedarse con la cuenta; la persona lo notará porque su contraseña inicial ya no funciona, y el administrador la restablece. Para reducirlo, entrega las contraseñas iniciales a las familias y pídeles entrar pronto.
+
+### Si ya tenías la base creada (actualizar)
+1. **Primero** fusiona el pull request y espera 1 o 2 minutos a que GitHub Pages publique la página nueva.
+2. **Después** vuelve a ejecutar [`schema.sql`](./schema.sql) completo en el SQL Editor (es seguro repetirlo). Agrega la columna `cambiar_clave`, deja al administrador exento y **deja con cambio pendiente a todos los demás usuarios que ya existan**.
+3. Si lo haces en el orden contrario, los usuarios verían la intranet vacía hasta que se publique la página nueva.
 
 ## Notas
 - El plan gratuito de Supabase pausa el proyecto tras una semana sin uso; se reactiva desde el panel.

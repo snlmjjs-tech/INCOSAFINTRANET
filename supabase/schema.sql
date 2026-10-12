@@ -15,6 +15,16 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- Contraseña inicial (RUT) → hay que cambiarla en el primer ingreso. Mientras esté pendiente, la base de datos no
+-- entrega notas ni anotaciones. Al añadir la columna a una base existente, el administrador queda exento.
+do $$ begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'profiles' and column_name = 'cambiar_clave') then
+    alter table public.profiles add column cambiar_clave boolean not null default true;
+    update public.profiles set cambiar_clave = false where rol = 'adm';
+  end if;
+end $$;
+
 create table if not exists public.apoderado_estudiante (
   apoderado_id  uuid not null references public.profiles(id) on delete cascade,
   estudiante_id uuid not null references public.profiles(id) on delete cascade,
@@ -64,6 +74,12 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.profiles where id = p and rol = 'est')
 $$;
 
+-- ¿La persona ya cambió su contraseña inicial? (si no tiene perfil, no)
+create or replace function public.clave_ok() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select coalesce((select not cambiar_clave from public.profiles where id = (select auth.uid())), false)
+$$;
+
 -- Al insertar, el servidor fija quién escribe (el cliente no puede falsearlo)
 create or replace function public.fijar_profesor() returns trigger
 language plpgsql security definer set search_path = '' as $$
@@ -80,8 +96,8 @@ drop trigger if exists anotaciones_fijar_profesor on public.anotaciones;
 create trigger anotaciones_fijar_profesor before insert on public.anotaciones
   for each row execute function public.fijar_profesor();
 
-revoke all on function public.mi_rol(), public.es_apoderado_de(uuid), public.es_estudiante(uuid), public.fijar_profesor() from public, anon;
-grant execute on function public.mi_rol(), public.es_apoderado_de(uuid), public.es_estudiante(uuid) to authenticated;
+revoke all on function public.mi_rol(), public.clave_ok(), public.es_apoderado_de(uuid), public.es_estudiante(uuid), public.fijar_profesor() from public, anon;
+grant execute on function public.mi_rol(), public.clave_ok(), public.es_apoderado_de(uuid), public.es_estudiante(uuid) to authenticated;
 
 -- ---------- Seguridad por fila ----------
 alter table public.profiles             enable row level security;
@@ -97,56 +113,79 @@ grant select, insert, update, delete on public.notas, public.anotaciones to auth
 -- (como 'Automatically expose new tables' está desactivado, hay que concederlos aquí).
 grant all on public.profiles, public.apoderado_estudiante, public.notas, public.anotaciones to service_role;
 
--- profiles: cada quien ve el suyo; el admin ve todos; el profesor ve estudiantes; el apoderado ve a sus hijos.
--- Crear, cambiar o borrar usuarios solo ocurre en la función del servidor (admin-users).
+-- profiles: cada quien ve el suyo (aunque tenga la clave pendiente, para saberlo); el admin ve todos;
+-- el profesor ve estudiantes; el apoderado ve a sus hijos. Crear, cambiar o borrar usuarios solo ocurre
+-- en la función del servidor (admin-users).
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated using (
   id = (select auth.uid())
-  or public.mi_rol() = 'adm'
-  or (public.mi_rol() = 'prof' and rol = 'est')
-  or (rol = 'est' and public.es_apoderado_de(id))
+  or (public.clave_ok() and (
+    public.mi_rol() = 'adm'
+    or (public.mi_rol() = 'prof' and rol = 'est')
+    or (rol = 'est' and public.es_apoderado_de(id))))
 );
 
 -- vínculos apoderado ↔ estudiante
 drop policy if exists vinculos_select on public.apoderado_estudiante;
 create policy vinculos_select on public.apoderado_estudiante for select to authenticated using (
-  apoderado_id = (select auth.uid()) or public.mi_rol() = 'adm'
+  public.clave_ok() and (apoderado_id = (select auth.uid()) or public.mi_rol() = 'adm')
 );
 
 -- notas: el estudiante ve las suyas, el apoderado las de sus hijos, profesores y admin todas
 drop policy if exists notas_select on public.notas;
 create policy notas_select on public.notas for select to authenticated using (
-  public.mi_rol() in ('adm','prof')
-  or estudiante_id = (select auth.uid())
-  or public.es_apoderado_de(estudiante_id)
+  public.clave_ok() and (
+    public.mi_rol() in ('adm','prof')
+    or estudiante_id = (select auth.uid())
+    or public.es_apoderado_de(estudiante_id))
 );
 drop policy if exists notas_insert on public.notas;
 create policy notas_insert on public.notas for insert to authenticated with check (
-  public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id)
+  public.clave_ok() and public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id)
 );
 drop policy if exists notas_update on public.notas;
 create policy notas_update on public.notas for update to authenticated
-  using (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid())))
-  with check (public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id));
+  using (public.clave_ok() and (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid()))))
+  with check (public.clave_ok() and public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id));
 drop policy if exists notas_delete on public.notas;
 create policy notas_delete on public.notas for delete to authenticated using (
-  public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid()))
+  public.clave_ok() and (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid())))
 );
 
 -- anotaciones: los estudiantes NO las ven; apoderados solo las de sus hijos
 drop policy if exists anot_select on public.anotaciones;
 create policy anot_select on public.anotaciones for select to authenticated using (
-  public.mi_rol() in ('adm','prof') or public.es_apoderado_de(estudiante_id)
+  public.clave_ok() and (public.mi_rol() in ('adm','prof') or public.es_apoderado_de(estudiante_id))
 );
 drop policy if exists anot_insert on public.anotaciones;
 create policy anot_insert on public.anotaciones for insert to authenticated with check (
-  public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id)
+  public.clave_ok() and public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id)
 );
 drop policy if exists anot_update on public.anotaciones;
 create policy anot_update on public.anotaciones for update to authenticated
-  using (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid())))
-  with check (public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id));
+  using (public.clave_ok() and (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid()))))
+  with check (public.clave_ok() and public.mi_rol() in ('adm','prof') and public.es_estudiante(estudiante_id));
 drop policy if exists anot_delete on public.anotaciones;
 create policy anot_delete on public.anotaciones for delete to authenticated using (
-  public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid()))
+  public.clave_ok() and (public.mi_rol() = 'adm' or (public.mi_rol() = 'prof' and profesor_id = (select auth.uid())))
 );
+
+-- ---------- Cambio de contraseña inicial ----------
+-- La persona marca su propia clave como cambiada (después de cambiarla con auth.updateUser).
+create or replace function public.clave_cambiada() returns void
+language sql security definer set search_path = '' as $$
+  update public.profiles set cambiar_clave = false where id = (select auth.uid())
+$$;
+
+-- El administrador obliga a cambiar la clave de ciertos usuarios (por ejemplo, tras restablecerla).
+create or replace function public.forzar_cambio_clave(p_usuarios text[]) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not (public.clave_ok() and public.mi_rol() = 'adm') then
+    raise exception 'Solo el administrador puede hacer esto';
+  end if;
+  update public.profiles set cambiar_clave = true where usuario = any (p_usuarios) and rol <> 'adm';
+end $$;
+
+revoke all on function public.clave_cambiada(), public.forzar_cambio_clave(text[]) from public, anon;
+grant execute on function public.clave_cambiada(), public.forzar_cambio_clave(text[]) to authenticated;
